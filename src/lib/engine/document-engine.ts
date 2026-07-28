@@ -350,33 +350,33 @@ export class DocumentEngine {
 
   /**
    * Resolve a single placeholder value
+   *
+   * Image placeholders (CompanyLogo, CompanySeal, signatures, etc.) return just the URL,
+   * because templates already use <img src="{{Placeholder}}"> wrapping.
+   * Falls back to context.customValues when company profile is not available.
    */
   private static resolvePlaceholder(key: string, context: PlaceholderContext): string {
     switch (key) {
       case 'CompanyName':
-        return context.company?.companyName || '';
+        return context.company?.companyName || context.customValues['CompanyName'] || '';
       case 'CompanyLogo':
-        return context.company?.companyLogo
-          ? `<img src="${context.company.companyLogo}" alt="Company Logo" style="max-height:80px;" />`
-          : '';
+        return context.company?.companyLogo || context.customValues['CompanyLogo'] || '';
       case 'CompanySeal':
-        return context.company?.companySeal
-          ? `<img src="${context.company.companySeal}" alt="Seal" style="max-height:60px;" />`
-          : '';
+        return context.company?.companySeal || context.customValues['CompanySeal'] || '';
       case 'CompanyAddress':
-        return context.company?.companyAddress || '';
+        return context.company?.companyAddress || context.customValues['CompanyAddress'] || '';
       case 'CompanyPhone':
-        return context.company?.companyPhone || '';
+        return context.company?.companyPhone || context.customValues['CompanyPhone'] || '';
       case 'CompanyEmail':
-        return context.company?.companyEmail || '';
+        return context.company?.companyEmail || context.customValues['CompanyEmail'] || '';
       case 'CompanyWebsite':
-        return context.company?.companyWebsite || '';
+        return context.company?.companyWebsite || context.customValues['CompanyWebsite'] || '';
       case 'GST':
-        return context.company?.gstNumber || '';
+        return context.company?.gstNumber || context.customValues['GST'] || '';
       case 'PAN':
-        return context.company?.panNumber || '';
+        return context.company?.panNumber || context.customValues['PAN'] || '';
       case 'CIN':
-        return context.company?.cinNumber || '';
+        return context.company?.cinNumber || context.customValues['CIN'] || '';
       case 'CurrentDate':
         return new Date().toLocaleDateString('en-IN', {
           year: 'numeric',
@@ -386,9 +386,9 @@ export class DocumentEngine {
       case 'CurrentYear':
         return new Date().getFullYear().toString();
       case 'AuthorizedSignature':
-        return context.company?.authorizedSign
-          ? `<img src="${context.company.authorizedSign}" alt="Signature" style="max-height:40px;" />`
-          : '';
+        return context.company?.authorizedSign || context.customValues['AuthorizedSignature'] || '';
+      case 'EmployeePhoto':
+        return context.customValues['EmployeePhoto'] || '';
       case 'EmployeeName':
         return context.customValues['EmployeeName'] || '';
       case 'Designation':

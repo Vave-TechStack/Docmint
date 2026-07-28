@@ -19,7 +19,7 @@ import {
 /**
  * DocMint DOCX Generator
  * Generates Microsoft Word (.docx) documents using the docx library.
- * Compatible with Next.js App Router and ESM environments.
+ * Supports images from data URIs and proper HTML-to-DOCX conversion.
  */
 export class DOCXGenerator {
   /**
@@ -31,7 +31,7 @@ export class DOCXGenerator {
   ): Promise<Buffer> {
     try {
       // Parse HTML content into docx elements
-      const children = this.parseHtmlToDocxElements(htmlContent);
+      const children = await this.parseHtmlToDocxElements(htmlContent);
 
       // Create the document
       const doc = new Document({
@@ -82,61 +82,289 @@ export class DOCXGenerator {
   }
 
   /**
-   * Parse simple HTML content into docx paragraph elements
+   * Decode a base64 data URI into a Buffer and extract MIME type + dimensions
    */
-  private static parseHtmlToDocxElements(html: string): (Paragraph | Table)[] {
+  private static decodeDataUri(uri: string): { buffer: Buffer; mimeType: string } | null {
+    try {
+      const match = uri.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) return null;
+      const mimeType = match[1];
+      const base64 = match[2];
+      const buffer = Buffer.from(base64, 'base64');
+      if (buffer.length === 0) return null;
+      return { buffer, mimeType };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Estimate image dimensions based on content type and constraints
+   */
+  private static estimateImageDimensions(
+    buffer: Buffer,
+    maxWidthEmu: number = 5000000 // ~5 inches in EMU
+  ): { width: number; height: number } {
+    // For simplicity, use square-ish aspect ratio since we can't parse image headers here
+    // DOCX uses EMU (English Metric Units): 1 inch = 914400 EMU
+    // Default to a reasonable size
+    const aspectRatio = 1.4; // Assume roughly 1.4:1 width:height ratio
+    const width = Math.min(maxWidthEmu, 4000000); // ~4.37 inches
+    const height = Math.round(width / aspectRatio);
+    return { width, height };
+  }
+
+  /**
+   * Parse HTML content into docx elements, preserving images
+   */
+  private static async parseHtmlToDocxElements(html: string): Promise<(Paragraph | Table)[]> {
     const elements: (Paragraph | Table)[] = [];
 
-    // Extract text content from HTML tags
-    const textContent = html
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/p>/gi, '\n')
-      .replace(/<\/h[1-6]>/gi, '\n')
-      .replace(/<\/div>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    // Split by block-level tags to process each section
+    const blockRegex = /(<(?:p|div|h[1-6]|table|tr|td|th|li|br)(?:[^>]*>)[\s\S]*?<\/(?:p|div|h[1-6]|table|tr|td|th|li)>|<br\s*\/?>)/gi;
 
-    const lines = textContent.split('\n\n');
+    let lastIndex = 0;
+    let match;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    // Helper to process inline content (text + images)
+    const processInlineContent = async (text: string, defaultBold: boolean = false, defaultSize: number = 22): Promise<(Paragraph | Table)[]> => {
+      const elements: (Paragraph | Table)[] = [];
+      const parts: { type: 'text' | 'image'; content: string; bold?: boolean; size?: number }[] = [];
 
-      // Check for table-like content (pipe-delimited)
-      if (trimmed.includes('|') && trimmed.includes('\n')) {
-        elements.push(...this.parseTable(trimmed));
-        continue;
+      // Extract images first
+      const imgRegex = /<img[^>]+src="([^"]*)"[^>]*\/?>/gi;
+      let imgMatch;
+      let textCursor = 0;
+      let textBuffer = text;
+
+      while ((imgMatch = imgRegex.exec(text)) !== null) {
+        // Add text before this image
+        const beforeText = text.substring(textCursor, imgMatch.index);
+        if (beforeText.trim()) {
+          parts.push({ type: 'text', content: beforeText, bold: defaultBold, size: defaultSize });
+        }
+
+        // Add image
+        parts.push({ type: 'image', content: imgMatch[1] });
+        textCursor = imgMatch.index + imgMatch[0].length;
       }
 
-      // Determine if it's a heading
-      if (trimmed.length < 100 && !trimmed.endsWith('.') && !trimmed.endsWith(':')) {
+      // Add remaining text
+      const afterText = text.substring(textCursor);
+      if (afterText.trim()) {
+        parts.push({ type: 'text', content: afterText, bold: defaultBold, size: defaultSize });
+      }
+
+      if (parts.length === 0) return [];
+
+      // Group consecutive text parts into one paragraph
+      let currentRuns: (TextRun | ImageRun)[] = [];
+      let textAccumulator = '';
+
+      const flushText = () => {
+        if (textAccumulator.trim()) {
+          currentRuns.push(
+            new TextRun({
+              text: textAccumulator.trim(),
+              bold: defaultBold,
+              size: defaultSize,
+              font: 'Calibri',
+            })
+          );
+          textAccumulator = '';
+        }
+      };
+
+      for (const part of parts) {
+        if (part.type === 'text') {
+          textAccumulator += part.content + ' ';
+        } else if (part.type === 'image') {
+          flushText();
+          const decoded = this.decodeDataUri(part.content);
+          if (decoded) {
+            const dims = this.estimateImageDimensions(decoded.buffer);
+            currentRuns.push(
+              new ImageRun({
+                type: decoded.mimeType.includes('png') ? 'png' : 'jpg',
+                data: decoded.buffer,
+                transformation: {
+                  width: dims.width,
+                  height: dims.height,
+                },
+              })
+            );
+          }
+        }
+      }
+
+      flushText();
+
+      if (currentRuns.length > 0) {
         elements.push(
           new Paragraph({
-            children: [
-              new TextRun({
-                text: trimmed,
-                bold: true,
-                size: 28, // 14pt
-                font: 'Calibri',
-              }),
-            ],
-            spacing: { after: 200, before: 200 },
-          })
-        );
-      } else {
-        elements.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: trimmed,
-                size: 22, // 11pt
-                font: 'Calibri',
-              }),
-            ],
+            children: currentRuns,
             spacing: { after: 120 },
           })
         );
+      }
+
+      return elements;
+    };
+
+    // Handle image-only tags (just standalone img tags)
+    const standaloneImgRegex = /<img[^>]+src="([^"]*)"[^>]*\/?>/gi;
+    let processedHtml = html;
+
+    // Process the HTML block by block
+    // First, wrap the entire HTML in a container for processing
+    const container = `<docroot>${html}</docroot>`;
+
+    // Simple state-machine parser
+    let i = 0;
+    let currentText = '';
+
+    const flushText = async () => {
+      if (currentText.trim()) {
+        const inlineElements = await processInlineContent(currentText);
+        elements.push(...inlineElements);
+        currentText = '';
+      }
+    };
+
+    while (i < container.length) {
+      if (container[i] === '<') {
+        const closeBracket = container.indexOf('>', i);
+        if (closeBracket === -1) break;
+
+        const tag = container.substring(i, closeBracket + 1);
+        const tagLower = tag.toLowerCase();
+
+        // Handle block-level tags
+        if (tagLower.startsWith('<p') || tagLower.startsWith('</p') ||
+            tagLower.startsWith('<div') || tagLower.startsWith('</div') ||
+            tagLower.startsWith('<h1') || tagLower.startsWith('</h1') ||
+            tagLower.startsWith('<h2') || tagLower.startsWith('</h2') ||
+            tagLower.startsWith('<h3') || tagLower.startsWith('</h3') ||
+            tagLower.startsWith('<h4') || tagLower.startsWith('</h4') ||
+            tagLower.startsWith('<h5') || tagLower.startsWith('</h5') ||
+            tagLower.startsWith('<h6') || tagLower.startsWith('</h6') ||
+            tagLower.startsWith('<br') || tagLower.startsWith('<li') || tagLower.startsWith('</li')) {
+          await flushText();
+        }
+        // Handle table tags - we'll skip complex table parsing but preserve content
+        else if (tagLower.startsWith('<table') || tagLower.startsWith('</table') ||
+                 tagLower.startsWith('<tr') || tagLower.startsWith('</tr') ||
+                 tagLower.startsWith('<td') || tagLower.startsWith('</td') ||
+                 tagLower.startsWith('<th') || tagLower.startsWith('</th')) {
+          await flushText();
+        }
+        // Handle images
+        else if (tagLower.startsWith('<img')) {
+          const srcMatch = tag.match(/src="([^"]*)"/);
+          if (srcMatch && srcMatch[1]) {
+            await flushText();
+            const decoded = this.decodeDataUri(srcMatch[1]);
+            if (decoded) {
+              const dims = this.estimateImageDimensions(decoded.buffer);
+              elements.push(
+                new Paragraph({
+                  children: [
+                    new ImageRun({
+                      type: decoded.mimeType.includes('png') ? 'png' : 'jpg',
+                      data: decoded.buffer,
+                      transformation: {
+                        width: dims.width,
+                        height: dims.height,
+                      },
+                    }),
+                  ],
+                  spacing: { after: 120 },
+                  alignment: AlignmentType.CENTER,
+                })
+              );
+            }
+          }
+        } else if (tagLower.startsWith('</docroot')) {
+          await flushText();
+        } else if (tagLower.startsWith('<style') || tagLower.startsWith('</style') ||
+                   tagLower.startsWith('<script') || tagLower.startsWith('</script') ||
+                   tagLower.startsWith('<meta') || tagLower.startsWith('<head') || tagLower.startsWith('</head') ||
+                   tagLower.startsWith('<html') || tagLower.startsWith('</html') ||
+                   tagLower.startsWith('<body') || tagLower.startsWith('</body') ||
+                   tagLower.startsWith('<!')) {
+          // Skip these tags
+        } else if (tagLower.startsWith('<strong') || tagLower.startsWith('</strong') ||
+                   tagLower.startsWith('<b') || tagLower.startsWith('</b') ||
+                   tagLower.startsWith('<em') || tagLower.startsWith('</em') ||
+                   tagLower.startsWith('<i') || tagLower.startsWith('</i') ||
+                   tagLower.startsWith('<u') || tagLower.startsWith('</u') ||
+                   tagLower.startsWith('<span') || tagLower.startsWith('</span') ||
+                   tagLower.startsWith('<a') || tagLower.startsWith('</a')) {
+          // Preserve content inside these tags
+          // Just consume the tag
+        } else {
+          // Unknown tag - just consume it
+        }
+
+        i = closeBracket + 1;
+      } else {
+        currentText += container[i];
+        i++;
+      }
+    }
+
+    // If no elements were produced, fall back to simple text extraction
+    if (elements.length === 0) {
+      const textContent = html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/h[1-6]>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<[^>]*>/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      const lines = textContent.split('\n\n');
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        // Check for table-like content (pipe-delimited)
+        if (trimmed.includes('|') && trimmed.includes('\n')) {
+          elements.push(...this.parseTable(trimmed));
+          continue;
+        }
+
+        // Determine if it's a heading
+        if (trimmed.length < 100 && !trimmed.endsWith('.') && !trimmed.endsWith(':')) {
+          elements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: trimmed,
+                  bold: true,
+                  size: 28,
+                  font: 'Calibri',
+                }),
+              ],
+              spacing: { after: 200, before: 200 },
+            })
+          );
+        } else {
+          elements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: trimmed,
+                  size: 22,
+                  font: 'Calibri',
+                }),
+              ],
+              spacing: { after: 120 },
+            })
+          );
+        }
       }
     }
 
@@ -152,7 +380,7 @@ export class DOCXGenerator {
 
     for (let i = 0; i < rows.length; i++) {
       const cells = rows[i].split('|').filter(c => c.trim());
-      // Skip separator rows (e.g., |---|---|)
+      // Skip separator rows
       if (cells.every(c => c.trim().match(/^-+$/))) continue;
 
       tableRows.push(
@@ -165,7 +393,7 @@ export class DOCXGenerator {
                     children: [
                       new TextRun({
                         text: cell.trim(),
-                        bold: i === 0, // First row as header
+                        bold: i === 0,
                         size: 22,
                       }),
                     ],
