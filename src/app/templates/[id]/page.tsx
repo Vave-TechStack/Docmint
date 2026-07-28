@@ -29,6 +29,7 @@ import {
   PenSquare,
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
+import { getDefaultImageForPlaceholder } from '@/lib/utils/image-placeholders';
 
 interface TemplateDetail {
   id: string;
@@ -147,15 +148,24 @@ export default function TemplateDetailPage() {
 
       // Step 2: Replace all {{PlaceholderName}} patterns with form values
       for (const [key, value] of Object.entries(formValues)) {
-        if (value) {
-          const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const regex = new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g');
-          html = html.replace(regex, value);
-        }
+        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g');
+        // Use default SVG placeholder for image fields when no image uploaded
+        const resolvedValue = value || getDefaultImageForPlaceholder(key);
+        html = html.replace(regex, resolvedValue);
       }
 
-      // Step 3: Remove any remaining unreplaced placeholders
-      html = html.replace(/\{\{[\w.-]+(\:[^}]+)?\}\}/g, '');
+      // Step 3: Replace remaining image placeholders with default SVGs; remove others
+      html = html.replace(/\{\{([\w.-]+)(?:\:[^}]+)?\}\}/g, (_match: string, key: string) => {
+        const lower = key.toLowerCase();
+        if (lower.includes('logo') || lower.includes('photo') || lower.includes('picture') ||
+            lower.includes('signature') || lower.includes('sign') || lower.includes('seal') ||
+            lower.includes('stamp') || lower.includes('heroimage') || lower.includes('imageurl') ||
+            lower.includes('cover')) {
+          return getDefaultImageForPlaceholder(key);
+        }
+        return '';
+      });
 
       // Step 4: Hide broken img tags with empty src
       html = html.replace(/<img([^>]*)src=""([^>]*)>/g, '<img$1src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221%22 height=%221%22%3E%3C/svg%3E"$2 style="display:none">');

@@ -8,6 +8,7 @@ import type {
   TemplateData,
 } from '@/types';
 import { SYSTEM_PLACEHOLDERS } from '@/lib/utils/constants';
+import { PLACEHOLDER_IMAGES } from '@/lib/utils/image-placeholders';
 import crypto from 'crypto';
 
 /**
@@ -360,9 +361,9 @@ export class DocumentEngine {
       case 'CompanyName':
         return context.company?.companyName || context.customValues['CompanyName'] || '';
       case 'CompanyLogo':
-        return context.company?.companyLogo || context.customValues['CompanyLogo'] || '';
+        return context.company?.companyLogo || context.customValues['CompanyLogo'] || PLACEHOLDER_IMAGES.logo;
       case 'CompanySeal':
-        return context.company?.companySeal || context.customValues['CompanySeal'] || '';
+        return context.company?.companySeal || context.customValues['CompanySeal'] || PLACEHOLDER_IMAGES.seal;
       case 'CompanyAddress':
         return context.company?.companyAddress || context.customValues['CompanyAddress'] || '';
       case 'CompanyPhone':
@@ -386,9 +387,9 @@ export class DocumentEngine {
       case 'CurrentYear':
         return new Date().getFullYear().toString();
       case 'AuthorizedSignature':
-        return context.company?.authorizedSign || context.customValues['AuthorizedSignature'] || '';
+        return context.company?.authorizedSign || context.customValues['AuthorizedSignature'] || PLACEHOLDER_IMAGES.signature;
       case 'EmployeePhoto':
-        return context.customValues['EmployeePhoto'] || '';
+        return context.customValues['EmployeePhoto'] || PLACEHOLDER_IMAGES.photo;
       case 'EmployeeName':
         return context.customValues['EmployeeName'] || '';
       case 'Designation':

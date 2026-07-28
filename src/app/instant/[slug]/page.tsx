@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
+import { getDefaultImageForPlaceholder } from '@/lib/utils/image-placeholders';
 
 export default function InstantDownloadTemplatePage() {
   const params = useParams();
@@ -103,15 +104,24 @@ export default function InstantDownloadTemplatePage() {
 
       // Replace {{Placeholder}} patterns
       for (const [key, value] of Object.entries(formValues)) {
-        if (value) {
-          const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const regex = new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g');
-          html = html.replace(regex, value);
-        }
+        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g');
+        // Use default SVG placeholder for image fields when no image uploaded
+        const resolvedValue = value || getDefaultImageForPlaceholder(key);
+        html = html.replace(regex, resolvedValue);
       }
 
-      // Remove remaining unreplaced placeholders
-      html = html.replace(/\{\{[\w.-]+(\:[^}]+)?\}\}/g, '');
+      // Replace remaining image placeholders with default SVGs; remove others
+      html = html.replace(/\{\{([\w.-]+)(?:\:[^}]+)?\}\}/g, (_match: string, key: string) => {
+        const lower = key.toLowerCase();
+        if (lower.includes('logo') || lower.includes('photo') || lower.includes('picture') ||
+            lower.includes('signature') || lower.includes('sign') || lower.includes('seal') ||
+            lower.includes('stamp') || lower.includes('heroimage') || lower.includes('imageurl') ||
+            lower.includes('cover')) {
+          return getDefaultImageForPlaceholder(key);
+        }
+        return '';
+      });
 
       // Hide broken img tags
       html = html.replace(
