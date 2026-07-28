@@ -1,0 +1,780 @@
+// ─────────────────────────────────────────────────────────
+// DocMint - Enterprise Document Generator
+// Prisma Schema v1.0.0
+// Multi-tenant, production-ready database schema
+// ─────────────────────────────────────────────────────────
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters", "fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────
+// ORGANIZATION / TENANT
+// ─────────────────────────────────────────────────────────
+
+model Organization {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  domain      String?    @unique
+  logo        String?
+  plan        PlanType   @default(FREE)
+  status      OrgStatus  @default(ACTIVE)
+  maxUsers    Int        @default(10)
+  maxStorage  Int        @default(1024)
+  settings    Json       @default("{}")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  users           User[]
+  companyProfiles CompanyProfile[]
+  documents       Document[]
+  templates       Template[]
+  subscriptions   Subscription[]
+  payments        Payment[]
+  supportTickets  SupportTicket[]
+  auditLogs       AuditLog[]
+  coupons         Coupon[]
+  categories      Category[]
+  folders         Folder[]
+
+  @@map("organizations")
+}
+
+enum PlanType {
+  FREE
+  PREMIUM
+  ENTERPRISE
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+// ─────────────────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────────────────
+
+model User {
+  id                String    @id @default(cuid())
+  organizationId    String
+  name              String
+  email             String    @unique
+  emailVerified     DateTime?
+  mobile            String?
+  mobileVerified    DateTime?
+  gstNumber         String?
+  panNumber         String?
+  companyAddress    String?
+  passwordHash      String?
+  image             String?
+  role              UserRole  @default(USER)
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  organization        Organization        @relation(fields: [organizationId], references: [id])
+  documents           Document[]
+  templates           Template[]
+  subscriptions       Subscription[]
+  payments            Payment[]
+  auditLogs           AuditLog[]
+  documentVersions    DocumentVersion[]
+  folders             Folder[]
+  companyProfiles     CompanyProfile[]
+  notificationReads   NotificationRead[]
+  supportTickets      SupportTicket[]
+  accounts            Account[]
+  sessions            Session[]
+  authenticators      Authenticator[]
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  USER
+}
+
+// ─────────────────────────────────────────────────────────
+// NEXT-AUTH MODELS
+// ─────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Authenticator {
+  id                   String  @id @default(cuid())
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter             Int
+  credentialDeviceType String
+  credentialBackedUp  Boolean
+  transports          String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("authenticators")
+}
+
+// ─────────────────────────────────────────────────────────
+// COMPANY PROFILE / BRANDING
+// ─────────────────────────────────────────────────────────
+
+model CompanyProfile {
+  id                String   @id @default(cuid())
+  organizationId    String
+  userId            String?
+  companyName       String
+  companyLogo       String?
+  companyLogoDark   String?
+  companyLogoLight  String?
+  companySeal       String?
+  companySealDark   String?
+  companySealLight  String?
+  authorizedSign    String?
+  hrSignature       String?
+  directorSignature String?
+  financeSignature  String?
+  companyAddress    String?
+  companyWebsite    String?
+  companyEmail      String?
+  companyPhone      String?
+  gstNumber         String?
+  panNumber         String?
+  cinNumber         String?
+  msmeNumber        String?
+  bankName          String?
+  bankAccount       String?
+  bankIfsc          String?
+  bankBranch        String?
+  upiId             String?
+  qrCode            String?
+  headerText        String?
+  footerText        String?
+  termsConditions   String?
+  privacyPolicy     String?
+  primaryColor      String   @default("#2563EB")
+  secondaryColor    String   @default("#64748B")
+  fontFamily        String   @default("Inter")
+  fontSize          String   @default("12")
+  isDefault         Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@map("company_profiles")
+}
+
+// ─────────────────────────────────────────────────────────
+// DOCUMENT CATEGORY
+// ─────────────────────────────────────────────────────────
+
+model Category {
+  id             String   @id @default(cuid())
+  organizationId String?
+  name           String
+  slug           String   @unique
+  description    String?
+  icon           String?
+  color          String?
+  displayOrder   Int      @default(0)
+  isPremium      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  documents    Document[]
+  templates    Template[]
+
+  @@index([organizationId])
+  @@index([slug])
+  @@map("categories")
+}
+
+// ─────────────────────────────────────────────────────────
+// DOCUMENT
+// ─────────────────────────────────────────────────────────
+
+model Document {
+  id              String          @id @default(cuid())
+  organizationId  String
+  userId          String
+  categoryId      String?
+  folderId        String?
+  title           String
+  description     String?
+  documentType    String
+  content         Json            @default("{}")
+  htmlContent     String?         @db.Text
+  plainText       String?         @db.Text
+  variables       Json            @default("{}")
+  status          DocumentStatus  @default(DRAFT)
+  isFavorite      Boolean         @default(false)
+  isArchived      Boolean         @default(false)
+  isTemplate      Boolean         @default(false)
+  tags            String[]
+  password        String?
+  expiresAt       DateTime?
+  lastEditedAt    DateTime?
+  version         Int             @default(1)
+  metadata        Json            @default("{}")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+
+  organization    Organization       @relation(fields: [organizationId], references: [id])
+  user            User               @relation(fields: [userId], references: [id])
+  category        Category?          @relation(fields: [categoryId], references: [id])
+  folder          Folder?            @relation(fields: [folderId], references: [id])
+  versions        DocumentVersion[]
+  shares          DocumentShare[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([categoryId])
+  @@index([folderId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([title])
+  @@map("documents")
+}
+
+enum DocumentStatus {
+  DRAFT
+  COMPLETED
+  ARCHIVED
+  DELETED
+}
+
+// ─────────────────────────────────────────────────────────
+// DOCUMENT VERSION
+// ─────────────────────────────────────────────────────────
+
+model DocumentVersion {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  version    Int
+  content    Json     @default("{}")
+  htmlContent String? @db.Text
+  variables  Json     @default("{}")
+  changeNote String?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([documentId])
+  @@index([userId])
+  @@map("document_versions")
+}
+
+// ─────────────────────────────────────────────────────────
+// DOCUMENT SHARE
+// ─────────────────────────────────────────────────────────
+
+model DocumentShare {
+  id         String        @id @default(cuid())
+  documentId String
+  shareType  ShareType
+  recipient  String?
+  token      String        @unique
+  password   String?
+  expiresAt  DateTime?
+  maxDownloads Int?
+  downloadCount Int        @default(0)
+  isActive   Boolean       @default(true)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([token])
+  @@map("document_shares")
+}
+
+enum ShareType {
+  LINK
+  EMAIL
+  WHATSAPP
+}
+
+// ─────────────────────────────────────────────────────────
+// FOLDER
+// ─────────────────────────────────────────────────────────
+
+model Folder {
+  id              String   @id @default(cuid())
+  organizationId  String
+  userId          String?
+  parentId        String?
+  name            String
+  slug            String
+  description     String?
+  icon            String?
+  color           String?
+  displayOrder    Int      @default(0)
+  isSystem        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User?        @relation(fields: [userId], references: [id])
+  parent       Folder?      @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children     Folder[]     @relation("FolderHierarchy")
+  documents    Document[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([parentId])
+  @@map("folders")
+}
+
+// ─────────────────────────────────────────────────────────
+// TEMPLATE
+// ─────────────────────────────────────────────────────────
+
+model Template {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  userId          String?
+  categoryId      String?
+  name            String
+  slug            String
+  description     String?
+  thumbnail       String?
+  content         Json     @default("{}")
+  htmlTemplate    String?  @db.Text
+  variables       Json     @default("[]")
+  placeholders    String[]
+  documentCategory String   @default("General")
+  visibility      TemplateVisibility @default(PRIVATE)
+  isPremium       Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  isDefault       Boolean  @default(false)
+  usageCount      Int      @default(0)
+  version         Int      @default(1)
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  user         User?         @relation(fields: [userId], references: [id])
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  versions     TemplateVersion[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([categoryId])
+  @@index([visibility])
+  @@index([documentCategory])
+  @@index([usageCount])
+  @@map("templates")
+}
+
+enum TemplateVisibility {
+  PUBLIC
+  PRIVATE
+  ORGANIZATION
+  PREMIUM
+  AI
+}
+
+// ─────────────────────────────────────────────────────────
+// TEMPLATE VERSION
+// ─────────────────────────────────────────────────────────
+
+model TemplateVersion {
+  id         String   @id @default(cuid())
+  templateId String
+  version    Int
+  content    Json     @default("{}")
+  htmlTemplate String? @db.Text
+  variables  Json     @default("[]")
+  changeNote String?
+  createdAt  DateTime @default(now())
+
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("template_versions")
+}
+
+// ─────────────────────────────────────────────────────────
+// SUBSCRIPTION
+// ─────────────────────────────────────────────────────────
+
+model Subscription {
+  id              String             @id @default(cuid())
+  organizationId  String
+  userId          String
+  razorpaySubscriptionId String?      @unique
+  plan            PlanType           @default(PREMIUM)
+  status          SubscriptionStatus @default(ACTIVE)
+  amount          Int
+  currency        String             @default("INR")
+  startDate       DateTime
+  endDate         DateTime
+  graceEndDate    DateTime
+  autoRenew       Boolean            @default(true)
+  cancelledAt     DateTime?
+  payments        Payment[]
+  metadata        Json               @default("{}")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([status])
+  @@index([endDate])
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  GRACE_PERIOD
+  SUSPENDED
+}
+
+// ─────────────────────────────────────────────────────────
+// PAYMENT
+// ─────────────────────────────────────────────────────────
+
+model Payment {
+  id                  String        @id @default(cuid())
+  organizationId      String
+  userId              String
+  subscriptionId      String?
+  razorpayOrderId     String?       @unique
+  razorpayPaymentId   String?       @unique
+  razorpaySignature   String?
+  amount              Int
+  currency            String        @default("INR")
+  status              PaymentStatus @default(PENDING)
+  paymentType         PaymentType
+  description         String?
+  invoiceNumber       String?       @unique
+  invoiceUrl          String?
+  couponCode          String?
+  discountAmount      Int           @default(0)
+  taxAmount           Int           @default(0)
+  refundId            String?
+  refundAmount        Int?
+  refundReason        String?
+  metadata            Json          @default("{}")
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  user         User          @relation(fields: [userId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([status])
+  @@index([paymentType])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentType {
+  SUBSCRIPTION
+  INSTANT_DOWNLOAD
+  RENEWAL
+}
+
+// ─────────────────────────────────────────────────────────
+// COUPON / PROMO CODE
+// ─────────────────────────────────────────────────────────
+
+model Coupon {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  code            String   @unique
+  description     String?
+  discountType    DiscountType
+  discountValue   Int
+  minAmount       Int      @default(0)
+  maxDiscount     Int?
+  maxUses         Int?
+  usedCount       Int      @default(0)
+  appliesTo       CouponAppliesTo
+  startsAt        DateTime
+  expiresAt       DateTime?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([code])
+  @@map("coupons")
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum CouponAppliesTo {
+  SUBSCRIPTION
+  INSTANT_DOWNLOAD
+  ALL
+}
+
+// ─────────────────────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────────────────────
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String
+  entity         String
+  entityId       String?
+  description    String?
+  metadata       Json     @default("{}")
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────
+// SUPPORT TICKET
+// ─────────────────────────────────────────────────────────
+
+model SupportTicket {
+  id             String      @id @default(cuid())
+  organizationId String
+  userId         String
+  subject        String
+  description    String      @db.Text
+  priority       TicketPriority @default(MEDIUM)
+  status         TicketStatus   @default(OPEN)
+  category       String?
+  attachments    String[]
+  assignedTo     String?
+  resolvedAt     DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization Organization            @relation(fields: [organizationId], references: [id])
+  user         User                    @relation(fields: [userId], references: [id])
+  replies      SupportTicketReply[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING
+  RESOLVED
+  CLOSED
+}
+
+model SupportTicketReply {
+  id        String   @id @default(cuid())
+  ticketId  String
+  userId    String?
+  message   String   @db.Text
+  isStaff   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("support_ticket_replies")
+}
+
+// ─────────────────────────────────────────────────────────
+// NOTIFICATION
+// ─────────────────────────────────────────────────────────
+
+model Notification {
+  id         String   @id @default(cuid())
+  type       String
+  title      String
+  message    String   @db.Text
+  link       String?
+  metadata   Json     @default("{}")
+  isGlobal   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  reads NotificationRead[]
+
+  @@map("notifications")
+}
+
+model NotificationRead {
+  id             String   @id @default(cuid())
+  notificationId String
+  userId         String
+  readAt         DateTime @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([notificationId, userId])
+  @@map("notification_reads")
+}
+
+// ─────────────────────────────────────────────────────────
+// CMS / BLOG
+// ─────────────────────────────────────────────────────────
+
+model BlogPost {
+  id          String     @id @default(cuid())
+  title       String
+  slug        String     @unique
+  content     String     @db.Text
+  excerpt     String?
+  coverImage  String?
+  author      String?
+  tags        String[]
+  category    String?
+  status      PostStatus @default(DRAFT)
+  publishedAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([slug])
+  @@index([status])
+  @@map("blog_posts")
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// ─────────────────────────────────────────────────────────
+// SYSTEM SETTINGS
+// ─────────────────────────────────────────────────────────
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  category  String   @default("general")
+  isPublic  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+  @@map("system_settings")
+}
+
+// ─────────────────────────────────────────────────────────
+// EMAIL TEMPLATES
+// ─────────────────────────────────────────────────────────
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  subject   String
+  body      String   @db.Text
+  variables String[]
+  category  String   @default("transactional")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("email_templates")
+}

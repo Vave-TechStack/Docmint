@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <!-- Background rounded square -->
+  <rect width="32" height="32" rx="7" fill="url(#docmint-gradient)"/>
+  
+  <!-- Document icon -->
+  <path d="M9 7C9 6.44772 9.44772 6 10 6H18.5L23 10.5V25C23 25.5523 22.5523 26 22 26H10C9.44772 26 9 25.5523 9 25V7Z" fill="white" fill-opacity="0.95"/>
+  <path d="M18.5 6L23 10.5H19.5C18.9477 10.5 18.5 10.0523 18.5 9.5V6Z" fill="white" fill-opacity="0.7"/>
+  
+  <!-- D letter accent -->
+  <text x="16" y="21" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="700" fill="url(#docmint-gradient)" dominant-baseline="middle">D</text>
+  
+  <defs>
+    <linearGradient id="docmint-gradient" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+</svg>
