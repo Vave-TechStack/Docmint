@@ -17,7 +17,15 @@ export default function middleware(req: NextRequest) {
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.razorpay.com https://api.openai.com;"
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.razorpay.com",
+      "style-src 'self' 'unsafe-inline' https://*.razorpay.com",
+      "img-src 'self' data: blob: https: https://*.razorpay.com",
+      "font-src 'self' data:",
+      "connect-src 'self' https://api.razorpay.com https://*.razorpay.com https://api.openai.com",
+      "frame-src 'self' https://*.razorpay.com",
+    ].join('; ')
   );
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   response.headers.set('X-XSS-Protection', '1; mode=block');
