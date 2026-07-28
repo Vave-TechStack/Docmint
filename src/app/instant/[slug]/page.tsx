@@ -18,6 +18,7 @@ import {
   PenSquare,
   X,
 } from 'lucide-react';
+import { GenerationOverlay } from '@/components/ui/generation-overlay';
 
 export default function InstantDownloadTemplatePage() {
   const params = useParams();
@@ -262,8 +263,11 @@ table{width:100%;border-collapse:collapse}
         </div>
 
         {paid && showPreview ? (
-          /* ─── Paid & Preview Ready — Download ─── */
-          <div>
+          <>
+            {/* Generation Overlay — covers the entire paid section */}
+            <GenerationOverlay show={downloading} format={downloadFormat} />
+
+            <div>
             <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
@@ -305,6 +309,7 @@ table{width:100%;border-collapse:collapse}
               />
             </div>
           </div>
+          </>
         ) : (
           /* ─── Form + Preview + Payment ─── */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

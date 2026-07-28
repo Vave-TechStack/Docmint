@@ -28,6 +28,7 @@ import {
   Image as ImageIcon,
   PenSquare,
 } from 'lucide-react';
+import { GenerationOverlay } from '@/components/ui/generation-overlay';
 
 interface TemplateDetail {
   id: string;
@@ -416,9 +417,13 @@ export default function TemplateDetailPage() {
 
       <div className="max-w-5xl mx-auto px-4 py-8">
         {showPreview ? (
-          /* Preview Mode - rendered in iframe for proper HTML/CSS isolation */
-          <div>
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <>
+            {/* Generation Overlay — covers the entire preview section */}
+            <GenerationOverlay show={downloading} format={downloadFormat} />
+
+            {/* Preview Mode - rendered in iframe for proper HTML/CSS isolation */}
+            <div>
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-lg font-semibold text-gray-900">Document Preview</h2>
               <div className="flex items-center gap-2">
                 {/* Format Toggle */}
@@ -472,6 +477,7 @@ export default function TemplateDetailPage() {
               />
             </div>
           </div>
+          </>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Main - Variable Form */}
