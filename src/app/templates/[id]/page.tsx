@@ -70,6 +70,8 @@ export default function TemplateDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
+  const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'docx'>('pdf');
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (params.id) fetchTemplate();
@@ -260,6 +262,47 @@ export default function TemplateDetailPage() {
     }
   };
 
+  const handleDownload = async (format: 'pdf' | 'docx') => {
+    if (!template?.htmlTemplate) {
+      toast.error('No template content to download');
+      return;
+    }
+    setDownloadFormat(format);
+    setDownloading(true);
+    try {
+      // Call the backend API to generate and download the file
+      const res = await fetch(`/api/templates/${template.id}/download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          variables: formValues,
+          format,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Download failed');
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${template.slug || template.name}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success(`${format.toUpperCase()} downloaded!`);
+    } catch {
+      toast.error('Download failed. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const handleDuplicate = async () => {
     setDuplicating(true);
     try {
@@ -375,9 +418,32 @@ export default function TemplateDetailPage() {
         {showPreview ? (
           /* Preview Mode - rendered in iframe for proper HTML/CSS isolation */
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-lg font-semibold text-gray-900">Document Preview</h2>
               <div className="flex items-center gap-2">
+                {/* Format Toggle */}
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                  <button
+                    onClick={() => setDownloadFormat('pdf')}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${downloadFormat === 'pdf' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    PDF
+                  </button>
+                  <button
+                    onClick={() => setDownloadFormat('docx')}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${downloadFormat === 'docx' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    DOCX
+                  </button>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => handleDownload(downloadFormat)}
+                  disabled={downloading}
+                >
+                  {downloading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Download className="w-4 h-4 mr-1.5" />}
+                  {downloading ? 'Downloading...' : `Download ${downloadFormat.toUpperCase()}`}
+                </Button>
                 <button
                   onClick={() => {
                     const iframe = previewIframeRef.current;
