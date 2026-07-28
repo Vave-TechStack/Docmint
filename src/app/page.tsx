@@ -49,18 +49,18 @@ export default function Home() {
               No login required for instant downloads. Premium plan for unlimited access.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/instant">
-                <Button size="xl" className="w-full sm:w-auto">
+              <Button asChild size="xl" className="w-full sm:w-auto">
+                <Link href="/instant">
                   <Download className="w-5 h-5 mr-2" />
                   Try Instant Download
-                </Button>
-              </Link>
-              <Link href="/signup">
-                <Button size="xl" variant="outline" className="w-full sm:w-auto">
+                </Link>
+              </Button>
+              <Button asChild size="xl" variant="outline" className="w-full sm:w-auto">
+                <Link href="/signup">
                   Start Free Trial
                   <ArrowRight className="w-5 h-5 ml-2" />
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </div>
             <p className="mt-4 text-sm text-gray-500">
               No credit card required • Instant download from ₹1 • 200+ templates
@@ -270,12 +270,12 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
-              <Link href="/instant">
-                <Button size="lg" className="w-full">
+              <Button asChild size="lg" className="w-full">
+                <Link href="/instant">
                   Try Now
                   <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </Card>
 
             {/* Premium */}
@@ -311,12 +311,12 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
-              <Link href="/signup">
-                <Button size="lg" variant="premium" className="w-full">
+              <Button asChild size="lg" variant="premium" className="w-full">
+                <Link href="/signup">
                   Start Free Trial
                   <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </Card>
           </div>
         </div>
@@ -332,17 +332,17 @@ export default function Home() {
             Join millions of professionals who trust DocMint for their business documents.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/signup">
-              <Button size="xl" className="bg-white text-blue-700 hover:bg-blue-50">
+            <Button asChild size="xl" className="bg-white text-blue-700 hover:bg-blue-50">
+              <Link href="/signup">
                 Get Started Free
                 <ArrowRight className="w-5 h-5 ml-2" />
-              </Button>
-            </Link>
-            <Link href="/instant">
-              <Button size="xl" variant="outline" className="border-white text-white hover:bg-white/10">
+              </Link>
+            </Button>
+            <Button asChild size="xl" variant="outline" className="border-white text-white hover:bg-white/10">
+              <Link href="/instant">
                 Try Instant Download
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           </div>
         </div>
       </section>
