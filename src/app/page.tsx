@@ -19,9 +19,10 @@ import {
   Megaphone,
   Home as HomeIcon,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils/cn';
 
 export default function Home() {
   return (
@@ -49,18 +50,20 @@ export default function Home() {
               No login required for instant downloads. Premium plan for unlimited access.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Button asChild size="xl" className="w-full sm:w-auto">
-                <Link href="/instant">
-                  <Download className="w-5 h-5 mr-2" />
-                  Try Instant Download
-                </Link>
-              </Button>
-              <Button asChild size="xl" variant="outline" className="w-full sm:w-auto">
-                <Link href="/signup">
-                  Start Free Trial
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </Link>
-              </Button>
+              <Link
+                href="/instant"
+                className={cn(buttonVariants({ size: 'xl' }), 'w-full sm:w-auto')}
+              >
+                <Download className="w-5 h-5 mr-2" />
+                Try Instant Download
+              </Link>
+              <Link
+                href="/signup"
+                className={cn(buttonVariants({ size: 'xl', variant: 'outline' }), 'w-full sm:w-auto')}
+              >
+                Start Free Trial
+                <ArrowRight className="w-5 h-5 ml-2" />
+              </Link>
             </div>
             <p className="mt-4 text-sm text-gray-500">
               No credit card required • Instant download from ₹1 • 200+ templates
@@ -270,12 +273,13 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
-              <Button asChild size="lg" className="w-full">
-                <Link href="/instant">
-                  Try Now
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Link>
-              </Button>
+              <Link
+                href="/instant"
+                className={cn(buttonVariants({ size: 'lg' }), 'w-full')}
+              >
+                Try Now
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Link>
             </Card>
 
             {/* Premium */}
@@ -311,12 +315,13 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
-              <Button asChild size="lg" variant="premium" className="w-full">
-                <Link href="/signup">
-                  Start Free Trial
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Link>
-              </Button>
+              <Link
+                href="/signup"
+                className={cn(buttonVariants({ size: 'lg', variant: 'premium' }), 'w-full')}
+              >
+                Start Free Trial
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Link>
             </Card>
           </div>
         </div>
@@ -332,17 +337,19 @@ export default function Home() {
             Join millions of professionals who trust DocMint for their business documents.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button asChild size="xl" className="bg-white text-blue-700 hover:bg-blue-50">
-              <Link href="/signup">
-                Get Started Free
-                <ArrowRight className="w-5 h-5 ml-2" />
-              </Link>
-            </Button>
-            <Button asChild size="xl" variant="outline" className="border-white text-white hover:bg-white/10">
-              <Link href="/instant">
-                Try Instant Download
-              </Link>
-            </Button>
+            <Link
+              href="/signup"
+              className={cn(buttonVariants({ size: 'xl' }), 'bg-white text-blue-700 hover:bg-blue-50 w-full sm:w-auto')}
+            >
+              Get Started Free
+              <ArrowRight className="w-5 h-5 ml-2" />
+            </Link>
+            <Link
+              href="/instant"
+              className={cn(buttonVariants({ size: 'xl', variant: 'outline' }), 'border-white text-white hover:bg-white/10 w-full sm:w-auto')}
+            >
+              Try Instant Download
+            </Link>
           </div>
         </div>
       </section>
