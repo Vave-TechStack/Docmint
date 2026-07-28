@@ -6,6 +6,7 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { RazorpayCheckout } from '@/components/razorpay-checkout';
+import { ErrorBoundary, PaymentFallback } from '@/components/ui/error-boundary';
 import {
   ArrowLeft,
   FileText,
@@ -403,15 +404,17 @@ table{width:100%;border-collapse:collapse}
                       <p className="text-xs text-gray-500">Secure payment via Razorpay</p>
                     </div>
                   </div>
-                  <RazorpayCheckout
-                    amount={100}
-                    type="instant"
-                    description={`${template.name} - Instant Download`}
-                    label="Pay ₹1 & Download Now"
-                    variant="premium"
-                    size="lg"
-                    onSuccess={handlePaymentSuccess}
-                  />
+                  <ErrorBoundary fallback={(retry) => <PaymentFallback onRetry={retry} />}>
+                    <RazorpayCheckout
+                      amount={100}
+                      type="instant"
+                      description={`${template.name} - Instant Download`}
+                      label="Pay ₹1 & Download Now"
+                      variant="premium"
+                      size="lg"
+                      onSuccess={handlePaymentSuccess}
+                    />
+                  </ErrorBoundary>
                 </div>
               )}
             </div>

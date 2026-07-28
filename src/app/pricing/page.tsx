@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { RazorpayCheckout } from '@/components/razorpay-checkout';
+import { ErrorBoundary, PaymentFallback } from '@/components/ui/error-boundary';
 import toast from 'react-hot-toast';
 import {
   CheckCircle2,
@@ -196,20 +197,22 @@ export default function PricingPage() {
                 </div>
                 {plan.name === 'Premium Monthly' && session ? (
                   <div className="mb-8">
-                    <RazorpayCheckout
-                      amount={29900}
-                      type="subscription"
-                      description="DocMint Premium - 30 Days"
-                      label="Subscribe Now — ₹299/mo"
-                      variant="premium"
-                      size="lg"
-                      icon={<CreditCard className="w-4 h-4 mr-2" />}
-                      onSuccess={handleSubscriptionSuccess}
-                      prefill={{
-                        name: session.user.name || '',
-                        email: session.user.email || '',
-                      }}
-                    />
+                    <ErrorBoundary fallback={(retry) => <PaymentFallback onRetry={retry} />}>
+                      <RazorpayCheckout
+                        amount={29900}
+                        type="subscription"
+                        description="DocMint Premium - 30 Days"
+                        label="Subscribe Now — ₹299/mo"
+                        variant="premium"
+                        size="lg"
+                        icon={<CreditCard className="w-4 h-4 mr-2" />}
+                        onSuccess={handleSubscriptionSuccess}
+                        prefill={{
+                          name: session.user.name || '',
+                          email: session.user.email || '',
+                        }}
+                      />
+                    </ErrorBoundary>
                   </div>
                 ) : (
                   <Link href={plan.href} className="mb-8">
