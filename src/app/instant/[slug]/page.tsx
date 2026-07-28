@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
@@ -32,6 +32,7 @@ export default function InstantDownloadTemplatePage() {
   const [paymentDetails, setPaymentDetails] = useState<{ paymentId: string; orderId: string; signature: string } | null>(null);
   const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'docx'>('pdf');
   const [downloading, setDownloading] = useState(false);
+  const paymentDetailsRef = useRef<{ paymentId: string; orderId: string; signature: string } | null>(null);
 
   useEffect(() => {
     if (params.slug) fetchTemplate();
@@ -138,7 +139,13 @@ table{width:100%;border-collapse:collapse}
     }
   };
 
-  const handleDownload = async () => {
+
+
+  // ─── Download helper — accepts payment details directly (no state lag) ───
+  const performDownload = async (
+    format: 'pdf' | 'docx',
+    payment: { paymentId: string; orderId: string; signature: string }
+  ) => {
     setDownloading(true);
     try {
       const res = await fetch('/api/instant/download', {
@@ -147,16 +154,14 @@ table{width:100%;border-collapse:collapse}
         body: JSON.stringify({
           templateId: template.id,
           variables: formValues,
-          format: downloadFormat,
-          paymentId: paymentDetails?.paymentId || '',
-          orderId: paymentDetails?.orderId || '',
-          signature: paymentDetails?.signature || '',
+          format,
+          ...payment,
         }),
       });
 
       if (!res.ok) {
-        const error = await res.json();
-        toast.error(error.error || 'Download failed');
+        const err = await res.json();
+        toast.error(err.error || 'Download failed');
         return;
       }
 
@@ -164,12 +169,12 @@ table{width:100%;border-collapse:collapse}
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${template.slug || template.name}.${downloadFormat}`;
+      a.download = `${template.slug || template.name}.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
-      toast.success('Download started!');
+      toast.success('Download complete!');
     } catch {
       toast.error('Download failed. Please try again.');
     } finally {
@@ -177,14 +182,32 @@ table{width:100%;border-collapse:collapse}
     }
   };
 
+  // ─── Payment success handler — saves details + auto-downloads ───
   const handlePaymentSuccess = async (details: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
-    setPaid(true);
-    setPaymentDetails({
+    const payment = {
       paymentId: details.razorpay_payment_id,
       orderId: details.razorpay_order_id,
       signature: details.razorpay_signature,
-    });
-    toast.success('Payment successful! You can now download your document.');
+    };
+    // Store in ref immediately (no React state lag)
+    paymentDetailsRef.current = payment;
+    setPaid(true);
+    setPaymentDetails(payment);
+
+    toast.success('Payment successful! Downloading your document...');
+
+    // Auto-download right after payment
+    await performDownload(downloadFormat, payment);
+  };
+
+  // ─── Manual download button (uses ref for reliable payment details) ───
+  const handleDownload = async () => {
+    const payment = paymentDetailsRef.current || paymentDetails;
+    if (!payment?.paymentId) {
+      toast.error('Payment details not found. Please complete payment first.');
+      return;
+    }
+    await performDownload(downloadFormat, payment);
   };
 
   if (loading) {
