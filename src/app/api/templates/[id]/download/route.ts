@@ -4,6 +4,7 @@ import { TemplateEngine } from '@/lib/engine/template-engine';
 import { DocumentEngine } from '@/lib/engine/document-engine';
 import { PDFGenerator } from '@/lib/pdf/pdf-generator';
 import { DOCXGenerator } from '@/lib/docx/docx-generator';
+import { generateSampleVariables } from '@/lib/data/sample-data';
 
 export async function POST(
   request: NextRequest,
@@ -42,8 +43,13 @@ export async function POST(
       );
     }
 
+    // If sample=true, use auto-generated sample data instead
+    const resolvedVariables = body.sample
+      ? generateSampleVariables((template.variables || []).map((v: { key: string }) => v.key))
+      : variables;
+
     // Generate document HTML from template + variables
-    const html = await DocumentEngine.generateFromTemplate(template, variables);
+    const html = await DocumentEngine.generateFromTemplate(template, resolvedVariables);
 
     // Generate requested format
     let fileBuffer: Buffer;
@@ -69,6 +75,11 @@ export async function POST(
 
     // Track usage
     await TemplateEngine.trackUsage(id).catch(() => {});
+
+    // Return with sample suffix for sample downloads
+    if (body.sample) {
+      fileName = `${template.slug || 'document'}-sample.${format === 'pdf' ? 'pdf' : 'docx'}`;
+    }
 
     return new NextResponse(new Uint8Array(fileBuffer), {
       headers: {

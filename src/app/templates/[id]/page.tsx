@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
 import { getDefaultImageForPlaceholder } from '@/lib/utils/image-placeholders';
+import { FileDown, FileSpreadsheet } from 'lucide-react';
 
 interface TemplateDetail {
   id: string;
@@ -74,6 +75,48 @@ export default function TemplateDetailPage() {
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
   const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'docx'>('pdf');
   const [downloading, setDownloading] = useState(false);
+  const [downloadingSample, setDownloadingSample] = useState(false);
+
+  // ─── Shared Download Helper ───
+  const triggerDownload = async (format: 'pdf' | 'docx', sample = false) => {
+    if (!template?.htmlTemplate) {
+      toast.error('No template content to download');
+      return;
+    }
+    const loadingSetter = sample ? setDownloadingSample : setDownloading;
+    loadingSetter(true);
+    setDownloadFormat(format);
+    try {
+      const res = await fetch(`/api/templates/${template.id}/download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          variables: formValues,
+          format,
+          ...(sample ? { sample: true } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Download failed');
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${template.slug || template.name}${sample ? '-sample' : ''}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success(`${sample ? 'Sample ' : ''}${format.toUpperCase()} downloaded!`);
+    } catch {
+      toast.error('Download failed. Please try again.');
+    } finally {
+      loadingSetter(false);
+    }
+  };
 
   useEffect(() => {
     if (params.id) fetchTemplate();
@@ -273,47 +316,6 @@ export default function TemplateDetailPage() {
     }
   };
 
-  const handleDownload = async (format: 'pdf' | 'docx') => {
-    if (!template?.htmlTemplate) {
-      toast.error('No template content to download');
-      return;
-    }
-    setDownloadFormat(format);
-    setDownloading(true);
-    try {
-      // Call the backend API to generate and download the file
-      const res = await fetch(`/api/templates/${template.id}/download`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          variables: formValues,
-          format,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        toast.error(err.error || 'Download failed');
-        return;
-      }
-
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${template.slug || template.name}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      toast.success(`${format.toUpperCase()} downloaded!`);
-    } catch {
-      toast.error('Download failed. Please try again.');
-    } finally {
-      setDownloading(false);
-    }
-  };
-
   const handleDuplicate = async () => {
     setDuplicating(true);
     try {
@@ -426,11 +428,11 @@ export default function TemplateDetailPage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-4 py-8">
+        {/* Generation Overlay — covers the entire page when downloading */}
+        <GenerationOverlay show={downloading || downloadingSample} format={downloadFormat} />
+
         {showPreview ? (
           <>
-            {/* Generation Overlay — covers the entire preview section */}
-            <GenerationOverlay show={downloading} format={downloadFormat} />
-
             {/* Preview Mode - rendered in iframe for proper HTML/CSS isolation */}
             <div>
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -453,7 +455,7 @@ export default function TemplateDetailPage() {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => handleDownload(downloadFormat)}
+                  onClick={() => triggerDownload(downloadFormat)}
                   disabled={downloading}
                 >
                   {downloading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Download className="w-4 h-4 mr-1.5" />}
@@ -612,11 +614,31 @@ export default function TemplateDetailPage() {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="flex items-center gap-3 mt-6 pt-6 border-t border-gray-100">
+                  <div className="flex items-center gap-3 mt-6 pt-6 border-t border-gray-100 flex-wrap">
                     <Button onClick={handlePreview} disabled={previewLoading}>
                       {previewLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
                       Preview
                     </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => triggerDownload('pdf', true)}
+                        disabled={downloadingSample}
+                      >
+                        {downloadingSample ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <FileDown className="w-4 h-4 mr-1.5" />}
+                        Sample PDF
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => triggerDownload('docx', true)}
+                        disabled={downloadingSample}
+                      >
+                        {downloadingSample ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 mr-1.5" />}
+                        Sample DOCX
+                      </Button>
+                    </div>
                     {session && (
                       <Button variant="default" onClick={handleUseTemplate}>
                         <FileText className="w-4 h-4 mr-2" />
@@ -631,17 +653,40 @@ export default function TemplateDetailPage() {
                   <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
                   <h3 className="text-sm font-semibold text-gray-900 mb-1">No variables needed</h3>
                   <p className="text-sm text-gray-500 mb-4">This template is ready to use</p>
-                  <div className="flex items-center justify-center gap-3">
-                    <Button onClick={handlePreview}>
-                      <Eye className="w-4 h-4 mr-2" />
-                      Preview
-                    </Button>
-                    {session && (
-                      <Button onClick={handleUseTemplate}>
-                        <FileText className="w-4 h-4 mr-2" />
-                        Create Document
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="flex items-center gap-3">
+                      <Button onClick={handlePreview}>
+                        <Eye className="w-4 h-4 mr-2" />
+                        Preview
                       </Button>
-                    )}
+                      {session && (
+                        <Button onClick={handleUseTemplate}>
+                          <FileText className="w-4 h-4 mr-2" />
+                          Create Document
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 pt-3 border-t border-gray-100 w-full justify-center">
+                      <span className="text-xs text-gray-400 mr-1">Try a sample:</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => triggerDownload('pdf', true)}
+                        disabled={downloadingSample}
+                      >
+                        {downloadingSample ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <FileDown className="w-4 h-4 mr-1.5" />}
+                        Sample PDF
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => triggerDownload('docx', true)}
+                        disabled={downloadingSample}
+                      >
+                        {downloadingSample ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 mr-1.5" />}
+                        Sample DOCX
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
