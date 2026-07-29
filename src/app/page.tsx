@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useSession } from 'next-auth/react';
 import {
   FileText,
   Sparkles,
@@ -20,17 +23,19 @@ import {
   Home as HomeIcon,
 } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils/cn';
 
 export default function Home() {
+  const { data: session } = useSession();
+
   return (
     <div>
       {/* ─── Hero Section ─── */}
       <section className="relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-purple-50">
-        <div className="absolute inset-0 bg-grid-pattern opacity-5" />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
+        <div className="absolute inset-0 bg-grid-pattern opacity-5 pointer-events-none" />
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
           <div className="text-center max-w-4xl mx-auto">
             <Badge variant="premium" size="lg" className="mb-6">
               <Sparkles className="w-4 h-4 mr-1" />
@@ -49,24 +54,24 @@ export default function Home() {
               Generate offer letters, invoices, contracts, and 200+ document types with AI.
               No login required for instant downloads. Premium plan for unlimited access.
             </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <div className="relative z-20 flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 href="/instant"
-                className={cn(buttonVariants({ size: 'xl' }), 'w-full sm:w-auto')}
+                className={cn(buttonVariants({ size: 'xl' }), 'w-full sm:w-auto cursor-pointer shadow-md hover:shadow-lg transition-all')}
               >
                 <Download className="w-5 h-5 mr-2" />
                 Try Instant Download
               </Link>
               <Link
-                href="/signup"
-                className={cn(buttonVariants({ size: 'xl', variant: 'outline' }), 'w-full sm:w-auto')}
+                href={session ? '/dashboard' : '/signup'}
+                className={cn(buttonVariants({ size: 'xl', variant: 'outline' }), 'w-full sm:w-auto cursor-pointer shadow-sm hover:shadow-md transition-all')}
               >
-                Start Free Trial
+                {session ? 'Go to Dashboard' : 'Start Free Trial'}
                 <ArrowRight className="w-5 h-5 ml-2" />
               </Link>
             </div>
             <p className="mt-4 text-sm text-gray-500">
-              No credit card required • Instant download from ₹1 • 200+ templates
+              No credit card required &bull; Instant download from &#8377;1 &bull; 200+ templates
             </p>
           </div>
         </div>
@@ -182,7 +187,7 @@ export default function Home() {
               { icon: Megaphone, name: 'Marketing', count: '15+', color: 'text-orange-600', bg: 'bg-orange-50' },
             ].map((cat) => (
               <Link key={cat.name} href={`/templates?category=${encodeURIComponent(cat.name)}`}>
-                <Card hover className="p-4 text-center">
+                <Card hover className="p-4 text-center cursor-pointer transition-all">
                   <div className={`w-10 h-10 rounded-lg ${cat.bg} flex items-center justify-center mx-auto mb-3`}>
                     <cat.icon className={`w-5 h-5 ${cat.color}`} />
                   </div>
@@ -255,7 +260,7 @@ export default function Home() {
               <div className="text-center">
                 <Badge variant="secondary" className="mb-4">No Login Required</Badge>
                 <h3 className="text-2xl font-bold mb-2">Instant Download</h3>
-                <div className="text-5xl font-bold text-blue-600 mb-2">₹1</div>
+                <div className="text-5xl font-bold text-blue-600 mb-2">&#8377;1</div>
                 <p className="text-gray-500 mb-8">per document</p>
               </div>
               <ul className="space-y-3 mb-8">
@@ -275,7 +280,7 @@ export default function Home() {
               </ul>
               <Link
                 href="/instant"
-                className={cn(buttonVariants({ size: 'lg' }), 'w-full')}
+                className={cn(buttonVariants({ size: 'lg' }), 'w-full cursor-pointer')}
               >
                 Try Now
                 <ArrowRight className="w-4 h-4 ml-2" />
@@ -293,7 +298,7 @@ export default function Home() {
               <div className="text-center">
                 <h3 className="text-2xl font-bold mb-2">Premium</h3>
                 <div className="text-5xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-2">
-                  ₹299
+                  &#8377;299
                 </div>
                 <p className="text-gray-500 mb-8">per month</p>
               </div>
@@ -316,10 +321,10 @@ export default function Home() {
                 ))}
               </ul>
               <Link
-                href="/signup"
-                className={cn(buttonVariants({ size: 'lg', variant: 'premium' }), 'w-full')}
+                href={session ? '/subscription' : '/signup'}
+                className={cn(buttonVariants({ size: 'lg', variant: 'premium' }), 'w-full cursor-pointer')}
               >
-                Start Free Trial
+                {session ? 'Upgrade to Premium' : 'Start Free Trial'}
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>
             </Card>
@@ -338,15 +343,15 @@ export default function Home() {
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
-              href="/signup"
-              className={cn(buttonVariants({ size: 'xl' }), 'bg-white text-blue-700 hover:bg-blue-50 w-full sm:w-auto')}
+              href={session ? '/dashboard' : '/signup'}
+              className={cn(buttonVariants({ size: 'xl' }), 'bg-white text-blue-700 hover:bg-blue-50 w-full sm:w-auto cursor-pointer')}
             >
-              Get Started Free
+              {session ? 'Go to Dashboard' : 'Get Started Free'}
               <ArrowRight className="w-5 h-5 ml-2" />
             </Link>
             <Link
               href="/instant"
-              className={cn(buttonVariants({ size: 'xl', variant: 'outline' }), 'border-white text-white hover:bg-white/10 w-full sm:w-auto')}
+              className={cn(buttonVariants({ size: 'xl', variant: 'outline' }), 'border-white text-white hover:bg-white/10 w-full sm:w-auto cursor-pointer')}
             >
               Try Instant Download
             </Link>
