@@ -117,6 +117,13 @@ export interface DesignerGroup {
   elementIds: string[];
 }
 
+/** Group metadata carried by the clipboard so Ctrl+C/V preserves grouping. */
+export interface ClipboardGroup {
+  id: string;
+  name: string;
+  elementIds: string[];
+}
+
 // ─── History ───
 export type DesignerSnapshot = {
   document: DesignerDocument;
@@ -182,7 +189,7 @@ export type DesignerAction =
   | { type: 'CLEAR_SELECTION' }
   | { type: 'BRING_FORWARD'; ids: string[]; pageId?: string }
   | { type: 'SEND_BACKWARD'; ids: string[]; pageId?: string }
-  | { type: 'GROUP'; ids: string[] }
+  | { type: 'GROUP'; ids: string[]; name?: string }
   | { type: 'UNGROUP'; groupId: string }
   | { type: 'ADD_PAGE'; settings?: Partial<PageSettings> }
   | { type: 'DELETE_PAGE'; pageId: string }

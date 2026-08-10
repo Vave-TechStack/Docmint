@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialStore, designerReducer, expandSelectionToElementIds, resizeTable } from './store';
+import { buildClipboard, createInitialStore, designerReducer, expandSelectionToElementIds, materializeClipboard, resizeTable } from './store';
 import type { DesignerDocument, DesignerElement, DesignerGroup, DesignerPage, DesignerStore, DesignerTable } from './types';
 
 function el(id: string, zIndex: number): DesignerElement {
@@ -190,6 +190,50 @@ describe('resizeTable', () => {
     const t = tableOf(2, 5, 1);
     const next = resizeTable(t, 4, 6);
     expect(next.totalColumn).toBe(1);
+  });
+});
+
+describe('clipboard group preservation', () => {
+  const group: DesignerGroup = { id: 'g1', name: 'Header', elementIds: ['a', 'b'] };
+
+  it('buildClipboard keeps groups fully contained in the copy', () => {
+    const clipboard = buildClipboard([el('a', 1), el('b', 2)], [group]);
+    expect(clipboard.groups).toEqual([{ id: 'g1', name: 'Header', elementIds: ['a', 'b'] }]);
+  });
+
+  it('buildClipboard drops groups whose members are only partially copied', () => {
+    const clipboard = buildClipboard([el('a', 1), el('c', 3)], [group]);
+    expect(clipboard.groups).toEqual([]);
+  });
+
+  it('materializeClipboard remaps ids and offsets position', () => {
+    const { elements, groups } = materializeClipboard(buildClipboard([el('a', 1), el('b', 2)], [group]));
+    const newIds = elements.map((e) => e.id);
+    expect(newIds).toHaveLength(2);
+    expect(new Set(newIds).size).toBe(2);
+    expect(newIds).not.toContain('a');
+    expect(elements[0].x).toBe(16);
+    expect(elements[0].y).toBe(16);
+    // The group is re-created with the remapped member ids.
+    expect(groups).toHaveLength(1);
+    expect(groups[0].name).toBe('Header');
+    expect(groups[0].elementIds).toHaveLength(2);
+    expect(groups[0].elementIds.every((id) => newIds.includes(id))).toBe(true);
+  });
+
+  it('materializeClipboard drops groups with fewer than 2 remapped members', () => {
+    const partial = { elements: [el('a', 1)], groups: [group] };
+    const { elements, groups } = materializeClipboard(partial);
+    expect(elements).toHaveLength(1);
+    expect(groups).toHaveLength(0);
+  });
+
+  it('materializeClipboard regenerates table cell ids', () => {
+    const withTable = { ...el('a', 1), table: tableOf(1, 2) };
+    const { elements } = materializeClipboard({ elements: [withTable], groups: [] });
+    const cellIds = elements[0].table!.cells.flatMap((row) => row.map((cell) => cell.id));
+    expect(cellIds).toHaveLength(2);
+    expect(cellIds).not.toContain('c0x0'); // old cell id regenerated
   });
 });
 

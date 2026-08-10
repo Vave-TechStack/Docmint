@@ -22,13 +22,17 @@ import {
 import toast from 'react-hot-toast';
 import { QRCodeCanvas } from 'qrcode.react';
 import { PALETTE_LOOKUP } from './palette';
-import { createElementFromPalette, uid } from './element-factory';
+import { createElementFromPalette } from './element-factory';
 import { useDesigner } from './store-context';
-import { expandSelectionToElementIds } from './store';
-import type { DesignerElement, PaletteComponent } from './types';
+import { buildClipboard, expandSelectionToElementIds, materializeClipboard } from './store';
+import type { ClipboardGroup, DesignerElement, PaletteComponent } from './types';
 
-// Clipboard for Ctrl+C / Ctrl+V (module-level so it survives re-renders)
-const clipboardRef: { current: DesignerElement[] | null } = { current: null };
+// Clipboard for Ctrl+C / Ctrl+V (module-level so it survives re-renders).
+// Carries the copied elements plus the groups they belong to, so pasting a
+// group re-creates the group (with fresh member ids).
+const clipboardRef: { current: { elements: DesignerElement[]; groups: ClipboardGroup[] } | null } = {
+  current: null,
+};
 
 const GRID = 8;
 const MIN_SIZE = 12;
@@ -411,31 +415,22 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'c') {
-        // A selected group id copies its member elements.
+        // A selected group id copies its member elements (group structure kept).
         const ids = expandSelectionToElementIds(selection, groups);
         const toCopy = activePage?.elements.filter((el) => ids.includes(el.id) && !el.locked);
         if (toCopy?.length) {
-          clipboardRef.current = structuredClone(toCopy);
+          clipboardRef.current = buildClipboard(toCopy, groups);
           toast('Copied to clipboard');
         }
       }
       if (mod && e.key.toLowerCase() === 'v') {
         if (panMode) return; // Preview mode: read-only (copy still works).
-        if (!clipboardRef.current?.length) return;
+        if (!clipboardRef.current?.elements.length) return;
         e.preventDefault();
-        const clones = clipboardRef.current.map((el) => {
-          const clone = structuredClone(el);
-          clone.id = uid();
-          clone.x += 16;
-          clone.y += 16;
-          if (clone.table) {
-            clone.table.cells = clone.table.cells.map((row) =>
-              row.map((cell) => ({ ...cell, id: uid('cell') }))
-            );
-          }
-          return clone;
-        });
+        const { elements: clones, groups: pasteGroups } = materializeClipboard(clipboardRef.current);
         clones.forEach((el) => dispatch({ type: 'ADD_ELEMENT', element: el }));
+        // Re-create any groups that were fully copied, remapped to the new ids.
+        pasteGroups.forEach((g) => dispatch({ type: 'GROUP', ids: g.elementIds, name: g.name }));
       }
     };
     window.addEventListener('keydown', onKey);

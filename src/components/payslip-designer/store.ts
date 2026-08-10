@@ -2,6 +2,7 @@ import { createDefaultDesign, createEmptyDesign } from './default-design';
 import { uid } from './element-factory';
 import type {
   CellDef,
+  ClipboardGroup,
   DesignerAction,
   DesignerDocument,
   DesignerElement,
@@ -54,6 +55,60 @@ export function expandSelectionToElementIds(ids: string[], groups: DesignerGroup
     else out.push(id);
   }
   return Array.from(new Set(out));
+}
+
+/**
+ * Build the clipboard payload from the elements being copied: the elements
+ * plus any groups whose members are ALL included (partial group copies are
+ * dropped so pasting never re-creates a broken group).
+ */
+export function buildClipboard(
+  elements: DesignerElement[],
+  groups: DesignerGroup[]
+): { elements: DesignerElement[]; groups: ClipboardGroup[] } {
+  const copiedIds = new Set(elements.map((el) => el.id));
+  const keptGroups = groups
+    .filter((g) => g.elementIds.every((id) => copiedIds.has(id)))
+    .map((g) => ({ id: g.id, name: g.name, elementIds: [...g.elementIds] }));
+  return { elements, groups: keptGroups };
+}
+
+/**
+ * Materialize a clipboard into fresh elements (new ids, offset position, new
+ * table-cell ids) and the same groups remapped to the new element ids.
+ * Groups that end up with fewer than 2 members are dropped.
+ */
+export function materializeClipboard(
+  clipboard: { elements: DesignerElement[]; groups: ClipboardGroup[] },
+  dx = 16,
+  dy = 16
+): { elements: DesignerElement[]; groups: ClipboardGroup[] } {
+  const oldToNew = new Map<string, string>();
+  const elements = clipboard.elements.map((el) => {
+    const clone = structuredClone(el);
+    const newId = uid();
+    oldToNew.set(el.id, newId);
+    clone.id = newId;
+    clone.groupId = undefined; // grouping is re-created from the clipboard's groups
+    clone.x += dx;
+    clone.y += dy;
+    if (clone.table) {
+      clone.table.cells = clone.table.cells.map((row) =>
+        row.map((cell) => ({ ...cell, id: uid('cell') }))
+      );
+    }
+    return clone;
+  });
+  const groups = clipboard.groups
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      elementIds: g.elementIds
+        .map((id) => oldToNew.get(id))
+        .filter((id): id is string => !!id),
+    }))
+    .filter((g) => g.elementIds.length >= 2);
+  return { elements, groups };
 }
 
 /**
@@ -315,7 +370,7 @@ export function designerReducer(state: DesignerStore, action: DesignerAction): D
       // Groups can only contain element ids — never nest another group.
       const groupIds = new Set(state.groups.map((g) => g.id));
       if (ids.some((id) => groupIds.has(id))) return state;
-      const group: DesignerGroup = { id: uid('grp'), name: 'Group', elementIds: ids };
+      const group: DesignerGroup = { id: uid('grp'), name: action.name ?? 'Group', elementIds: ids };
       return pushHistory(state, {
         ...snapshotOf(state),
         groups: [...state.groups, group],
