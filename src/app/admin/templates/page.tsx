@@ -21,16 +21,16 @@ import {
 // controls who can see the template.
 const VISIBILITY_OPTIONS = ['PUBLIC', 'PRIVATE', 'ORGANIZATION', 'AI'];
 
-// Download-mode filter pills: Instant (₹1 pay-per-download) vs Premium
+// Download-mode filter pills: Instant (₹9 pay-per-download) vs Premium
 // (subscription-gated). Both are PUBLIC — the mode is what differs.
 const MODE_FILTERS = [
   { value: '', label: 'All Modes' },
-  { value: 'instant', label: 'Instant ₹1' },
+  { value: 'instant', label: 'Instant ₹9' },
   { value: 'premium', label: 'Premium' },
 ];
 
 const MODE_OPTIONS = [
-  { value: 'instant', label: 'Instant ₹1' },
+  { value: 'instant', label: 'Instant ₹9' },
   { value: 'premium', label: 'Premium' },
 ];
 
@@ -106,14 +106,14 @@ export default function AdminTemplatesPage() {
     }
   };
 
-  // Switch a template's download mode (Instant ₹1 ⇄ Premium).
+  // Switch a template's download mode (Instant ₹9 ⇄ Premium).
   // Both modes are PUBLIC — warn when the template isn't public yet.
   const handleModeChange = (template: AdminTemplate, mode: string) => {
     if (mode === 'none') return;
     if (
       template.visibility !== 'PUBLIC' &&
       !confirm(
-        `Switch "${template.name}" to ${mode === 'premium' ? 'Premium' : 'Instant ₹1'}?\nIt will be made PUBLIC and appear in the template library.`
+        `Switch "${template.name}" to ${mode === 'premium' ? 'Premium' : 'Instant ₹9'}?\nIt will be made PUBLIC and appear in the template library.`
       )
     ) {
       return;
@@ -121,7 +121,7 @@ export default function AdminTemplatesPage() {
     handleAction(
       template.id,
       { mode },
-      mode === 'premium' ? 'Switched to Premium' : 'Switched to Instant ₹1 download'
+      mode === 'premium' ? 'Switched to Premium' : 'Switched to Instant ₹9 download'
     );
   };
 
@@ -152,7 +152,7 @@ export default function AdminTemplatesPage() {
     if (template.visibility === 'PUBLIC') {
       return (
         <span className="flex items-center text-xs text-blue-600">
-          <Zap className="w-3 h-3 mr-1" /> Instant ₹1
+          <Zap className="w-3 h-3 mr-1" /> Instant ₹9
         </span>
       );
     }
@@ -189,7 +189,7 @@ export default function AdminTemplatesPage() {
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               />
             </div>
-            {/* Download mode filter: Instant (₹1) vs Premium */}
+            {/* Download mode filter: Instant (₹9) vs Premium */}
             <div className="flex gap-2 flex-wrap">
               {MODE_FILTERS.map((m) => (
                 <Button
@@ -315,12 +315,12 @@ export default function AdminTemplatesPage() {
                               <option key={v} value={v}>{v}</option>
                             ))}
                           </select>
-                          {/* Download mode: Instant ₹1 ⇄ Premium (atomic switch) */}
+                          {/* Download mode: Instant ₹9 ⇄ Premium (atomic switch) */}
                           <select
                             value={template.mode === 'instant' || template.mode === 'premium' ? template.mode : 'none'}
                             onChange={(e) => handleModeChange(template, e.target.value)}
                             className="text-xs rounded-lg border border-gray-200 px-1.5 py-1 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            title="Switch download mode (Instant ₹1 ⇄ Premium)"
+                            title="Switch download mode (Instant ₹9 ⇄ Premium)"
                           >
                             <option value="none" disabled>
                               {template.mode === 'instant' || template.mode === 'premium' ? '—' : template.visibility}

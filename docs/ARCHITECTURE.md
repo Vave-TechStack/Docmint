@@ -28,7 +28,7 @@ DocMint is a **production-ready enterprise SaaS platform** for AI-powered busine
 - **200+ Document Types** across 10+ categories
 - **AI-powered content generation** with variable detection
 - **Multi-tenant isolation** with complete data separation
-- **Dual business model**: Instant Download (₹1) + Premium Subscription (₹299/mo)
+- **Dual business model**: Instant Download (₹9) + Premium Subscription (₹299/mo)
 - **Real-time document editing** with drag-and-drop interface
 - **Enterprise-grade security** with SOC2/GDPR readiness
 

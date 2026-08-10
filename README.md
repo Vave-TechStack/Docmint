@@ -9,7 +9,7 @@ DocMint is a multi-tenant, AI-powered document generation platform. Pick a templ
 ## ✨ Features
 
 - **📄 Template Library** — 20+ professionally designed sample templates across 12 categories (Finance, Legal, Business, Marketing, Resume Builder, Education, Medical, Manufacturing, Real Estate, Certificates, General, HR Documents), seeded out of the box.
-- **⚡ Instant Download (₹1)** — Generate a document in seconds and pay via Razorpay, no account required (`/instant`).
+- **⚡ Instant Download (₹9)** — Generate a document in seconds and pay via Razorpay, no account required (`/instant`).
 - **👑 Premium Subscription (₹299/mo)** — Unlimited access to premium templates, managed via subscriptions, coupons, and grace periods.
 - **🤖 AI Generation** — Automatic placeholder detection and AI-assisted content generation (OpenAI or Gemini, auto-detected by env vars).
 - **📝 Visual Payslip Designer** — Drag-and-drop canvas editor to design custom payslip layouts with live preview and HTML export (`/payslip-designer`).

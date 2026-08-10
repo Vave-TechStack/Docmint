@@ -71,7 +71,7 @@ export default function Home() {
               </Link>
             </div>
             <p className="mt-4 text-sm text-gray-500">
-              No credit card required &bull; Instant download from &#8377;1 &bull; 200+ templates
+              No credit card required &bull; Instant download from &#8377;9 &bull; 200+ templates
             </p>
           </div>
         </div>
@@ -260,7 +260,7 @@ export default function Home() {
               <div className="text-center">
                 <Badge variant="secondary" className="mb-4">No Login Required</Badge>
                 <h3 className="text-2xl font-bold mb-2">Instant Download</h3>
-                <div className="text-5xl font-bold text-blue-600 mb-2">&#8377;1</div>
+                <div className="text-5xl font-bold text-blue-600 mb-2">&#8377;9</div>
                 <p className="text-gray-500 mb-8">per document</p>
               </div>
               <ul className="space-y-3 mb-8">

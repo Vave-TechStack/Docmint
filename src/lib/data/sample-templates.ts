@@ -46,7 +46,7 @@ export interface SampleTemplate {
   htmlTemplate?: string;
 }
 
-// Templates sold as one-time ₹1 instant downloads are PUBLIC + isPremium=false.
+// Templates sold as one-time ₹9 instant downloads are PUBLIC + isPremium=false.
 // Premium templates require an active subscription to download (admin can toggle).
 // These names must stay in sync with the same set in prisma/seed.ts / seed-temp.ts.
 const PREMIUM_TEMPLATE_NAMES = [

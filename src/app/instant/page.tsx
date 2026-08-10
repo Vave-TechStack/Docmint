@@ -65,7 +65,7 @@ export default function InstantDownloadPage() {
             Instant Document Download
           </h1>
           <p className="text-xl text-blue-100 max-w-2xl mx-auto mb-8">
-            Choose a template, fill the form, pay ₹1, and download your document instantly. No signup needed.
+            Choose a template, fill the form, pay ₹9, and download your document instantly. No signup needed.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <div className="flex items-center space-x-2 text-blue-100">
@@ -145,7 +145,7 @@ export default function InstantDownloadPage() {
                       <p className="text-xs text-gray-500 mb-3 line-clamp-2">{template.description}</p>
                       <div className="flex items-center justify-between">
                         <Badge variant="secondary" size="sm">{template.documentCategory || template.category}</Badge>
-                        <span className="text-xs font-medium text-blue-600">₹1</span>
+                        <span className="text-xs font-medium text-blue-600">₹9</span>
                       </div>
                     </CardContent>
                   </Card>

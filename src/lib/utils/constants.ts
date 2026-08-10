@@ -6,7 +6,7 @@ export const SUBSCRIPTION_DURATION_DAYS = 30;
 export const GRACE_PERIOD_DAYS = 7;
 export const PREMIUM_PRICE = 299; // INR per month
 export const ANNUAL_PREMIUM_PRICE = 2870; // INR per year (20% off ₹3,588)
-export const INSTANT_DOWNLOAD_PRICE = 1; // INR
+export const INSTANT_DOWNLOAD_PRICE = 9; // INR
 
 // ─── Data Retention ───
 export const DATA_RETENTION_DAYS = 30; // Default

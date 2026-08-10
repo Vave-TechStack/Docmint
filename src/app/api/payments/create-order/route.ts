@@ -26,8 +26,9 @@ export async function POST(request: NextRequest) {
       orderAmount = validAmounts.includes(amount) ? amount : PaymentService.SUBSCRIPTION_AMOUNT;
       receipt = `sub_${Date.now()}`;
     } else if (type === 'instant') {
-      // Enforce minimum amount server-side
-      const clientAmount = amount || INSTANT_DOWNLOAD_PRICE;
+      // Enforce minimum amount server-side. Razorpay amounts are in paise;
+      // INSTANT_DOWNLOAD_PRICE is in INR so the fallback is converted.
+      const clientAmount = amount || INSTANT_DOWNLOAD_PRICE * 100;
       orderAmount = Math.max(clientAmount, PaymentService.MIN_INSTANT_AMOUNT);
       receipt = `inst_${Date.now()}`;
     } else {

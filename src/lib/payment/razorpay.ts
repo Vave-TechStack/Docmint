@@ -8,8 +8,8 @@ const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET!;
  * Handles Razorpay orders, payments, subscriptions, and refunds.
  */
 export class PaymentService {
-  // Minimum amount for instant download in paise (₹1 = 100 paise)
-  static readonly MIN_INSTANT_AMOUNT = 100;
+  // Minimum amount for instant download in paise (₹9 = 900 paise)
+  static readonly MIN_INSTANT_AMOUNT = 900;
   static readonly SUBSCRIPTION_AMOUNT = 29900; // ₹299 in paise (monthly)
   static readonly ANNUAL_SUBSCRIPTION_AMOUNT = 287000; // ₹2,870 in paise (annual, 20% off)
 

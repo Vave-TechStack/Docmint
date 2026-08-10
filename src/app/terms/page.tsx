@@ -29,7 +29,7 @@ Account Termination: We reserve the right to suspend or terminate accounts that 
       title: '4. Subscriptions and Payments',
       content: `Premium Subscription: ₹299 per month, billed monthly. Features include unlimited document generation, cloud storage, AI features, and company branding.
 
-Instant Download: ₹1 per document. Payment is processed securely through Razorpay before download.
+Instant Download: ₹9 per document. Payment is processed securely through Razorpay before download.
 
 Renewal: Premium subscriptions auto-renew unless cancelled. You can cancel anytime from your subscription settings.
 

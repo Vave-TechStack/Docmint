@@ -41,7 +41,7 @@ interface RazorpayInstance {
 }
 
 interface RazorpayCheckoutProps {
-  /** Amount in paise (e.g., ₹1 = 100) */
+  /** Amount in paise (e.g., ₹9 = 900) */
   amount: number;
   /** Payment type */
   type: 'instant' | 'subscription' | 'renewal';
@@ -191,7 +191,7 @@ export function RazorpayCheckout({
     }
   }, [amount, type, description, prefill, onSuccess, onComplete, loadRazorpayScript]);
 
-  const buttonLabel = label || (type === 'instant' ? 'Pay ₹1 & Download' : type === 'subscription' ? 'Pay ₹299 & Subscribe' : 'Pay Now');
+  const buttonLabel = label || (type === 'instant' ? 'Pay ₹9 & Download' : type === 'subscription' ? 'Pay ₹299 & Subscribe' : 'Pay Now');
 
   return (
     <div className={className}>

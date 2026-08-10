@@ -594,7 +594,7 @@ export default function TemplateDetailPage() {
                   <>
                     <span className="text-gray-300">·</span>
                     <span className="text-xs font-semibold text-blue-600 flex items-center gap-1">
-                      <Zap className="w-3 h-3" /> ₹1 INSTANT
+                      <Zap className="w-3 h-3" /> ₹9 INSTANT
                     </span>
                   </>
                 ) : null}

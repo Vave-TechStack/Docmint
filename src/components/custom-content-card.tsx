@@ -21,7 +21,7 @@ interface CustomContentCardProps {
 
 /**
  * "Add Custom Content" — lets users add their own logo, a header/footer line
- * and any extra text fields. Used by the template fill-in form and the ₹1
+ * and any extra text fields. Used by the template fill-in form and the ₹9
  * instant download form so both flows behave identically. Controlled: the
  * parent owns the values (they feed the preview/download injection).
  */

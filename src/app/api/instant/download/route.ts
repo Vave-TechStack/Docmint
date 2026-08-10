@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Premium templates are sold through the Template Library behind the
-    // Premium subscription — block the ₹1 instant flow so it can't bypass.
+    // Premium subscription — block the ₹9 instant flow so it can't bypass.
     if (template.isPremium) {
       return NextResponse.json(
         {

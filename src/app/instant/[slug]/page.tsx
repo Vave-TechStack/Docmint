@@ -480,7 +480,7 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
               {template.documentCategory || template.category}
             </span>
-            <span className="text-xs text-gray-400">₹1 per download</span>
+            <span className="text-xs text-gray-400">₹9 per download</span>
           </div>
         </div>
 
@@ -669,16 +669,16 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
                       <Zap className="w-5 h-5 text-indigo-600" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-gray-900">Pay ₹1 & Download</h3>
+                      <h3 className="font-semibold text-gray-900">Pay ₹9 & Download</h3>
                       <p className="text-xs text-gray-500">Secure payment via Razorpay</p>
                     </div>
                   </div>
                   <ErrorBoundary fallback={(retry) => <PaymentFallback onRetry={retry} />}>
                     <RazorpayCheckout
-                      amount={100}
+                      amount={900}
                       type="instant"
                       description={`${template.name} - Instant Download`}
-                      label="Pay ₹1 & Download Now"
+                      label="Pay ₹9 & Download Now"
                       variant="premium"
                       size="lg"
                       onSuccess={handlePaymentSuccess}
@@ -708,7 +708,7 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-medium flex-shrink-0 mt-0.5">4</span>
-                    <span>Pay ₹1 via Razorpay</span>
+                    <span>Pay ₹9 via Razorpay</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-medium flex-shrink-0 mt-0.5">5</span>

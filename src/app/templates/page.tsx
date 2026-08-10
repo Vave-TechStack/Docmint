@@ -41,11 +41,11 @@ interface TemplateListItem {
   user?: { name: string; image?: string } | null;
 }
 
-// Instant (₹1) = PUBLIC & non-premium → the no-login ₹1 download flow.
+// Instant (₹9) = PUBLIC & non-premium → the no-login ₹9 download flow.
 // Premium = isPremium flag → subscription-gated downloads.
 const VISIBILITY_FILTERS = [
   { value: '', label: 'All Templates', icon: LayoutGrid },
-  { value: 'INSTANT', label: 'Instant (₹1)', icon: Zap },
+  { value: 'INSTANT', label: 'Instant (₹9)', icon: Zap },
   { value: 'PREMIUM', label: 'Premium', icon: Crown },
   { value: 'PRIVATE', label: 'My Templates', icon: Users },
 ];
@@ -92,7 +92,7 @@ function TemplatesPageContent() {
       const params = new URLSearchParams();
       if (selectedCategory) params.set('category', selectedCategory);
       if (selectedVisibility === 'INSTANT') {
-        // Instant (₹1): PUBLIC visibility AND explicitly not premium.
+        // Instant (₹9): PUBLIC visibility AND explicitly not premium.
         params.set('type', 'PUBLIC');
         params.set('isPremium', 'false');
       } else if (selectedVisibility === 'PREMIUM') {
@@ -305,7 +305,7 @@ function TemplatesPageContent() {
                     unoptimized
                     className="object-cover"
                   />
-                  {/* Badges — Instant (₹1) vs Premium segregation */}
+                  {/* Badges — Instant (₹9) vs Premium segregation */}
                   <div className="absolute top-2 right-2 flex gap-1">
                     {template.isPremium ? (
                       <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-semibold shadow-sm">
@@ -313,7 +313,7 @@ function TemplatesPageContent() {
                       </span>
                     ) : template.visibility === 'PUBLIC' ? (
                       <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-600 to-indigo-500 text-white text-[10px] font-semibold shadow-sm">
-                        ₹1 INSTANT
+                        ₹9 INSTANT
                       </span>
                     ) : null}
                   </div>
@@ -387,7 +387,7 @@ function TemplatesPageContent() {
                         </span>
                       ) : (
                         <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">
-                          {template.visibility === 'PUBLIC' ? 'Instant ₹1' : 'Private'}
+                          {template.visibility === 'PUBLIC' ? 'Instant ₹9' : 'Private'}
                         </span>
                       )}
                     </td>

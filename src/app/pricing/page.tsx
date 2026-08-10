@@ -23,7 +23,7 @@ import {
 const PLANS = [
   {
     name: 'Instant Download',
-    price: '₹1',
+    price: '₹9',
     period: 'per document',
     description: 'No login required. Pay as you go.',
     badge: 'No Login Required',
@@ -317,7 +317,7 @@ export default function PricingPage() {
         <h2 className="text-2xl font-bold text-center mb-8">Frequently Asked Questions</h2>
         <div className="space-y-4">
           {[
-            { q: 'How does Instant Download work?', a: 'Select a template, fill in the details, preview your document, pay ₹1 via Razorpay, and download immediately. No account needed.' },
+            { q: 'How does Instant Download work?', a: 'Select a template, fill in the details, preview your document, pay ₹9 via Razorpay, and download immediately. No account needed.' },
             { q: 'Can I cancel my Premium subscription?', a: 'Yes, you can cancel anytime from your subscription settings. Your access continues until the end of the billing period.' },
             { q: 'What is the difference between Monthly and Annual billing?', a: 'Annual billing gives you a 20% discount — ₹2,870/year instead of ₹299/month. You get the same full Premium access for a full year at a reduced rate.' },
             { q: 'What payment methods are accepted?', a: 'We accept all major credit/debit cards, UPI, net banking, and wallets through Razorpay.' },

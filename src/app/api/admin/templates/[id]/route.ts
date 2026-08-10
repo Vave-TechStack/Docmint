@@ -21,10 +21,10 @@ export async function PATCH(
 
     const data: Record<string, unknown> = {};
 
-    // ── Download mode switch: Instant (₹1) ⇄ Premium ─────────────────────
+    // ── Download mode switch: Instant (₹9) ⇄ Premium ─────────────────────
     // One atomic switch that keeps isPremium + visibility consistent so a
     // template can never sit in a half-instant / half-premium state:
-    //   instant → PUBLIC + non-premium (₹1 pay-per-download flow)
+    //   instant → PUBLIC + non-premium (₹9 pay-per-download flow)
     //   premium → PUBLIC + isPremium  (subscription-gated flow)
     if (body.mode !== undefined) {
       if (body.mode === 'instant') {
@@ -68,7 +68,7 @@ export async function PATCH(
       body.mode === 'premium'
         ? `Template "${template.name}" switched to Premium (subscription-gated)`
         : body.mode === 'instant'
-          ? `Template "${template.name}" switched to Instant ₹1 download`
+          ? `Template "${template.name}" switched to Instant ₹9 download`
           : `Template "${template.name}" updated by admin`;
 
     await prisma.auditLog.create({
