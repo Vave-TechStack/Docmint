@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { PaymentService } from '@/lib/payment/razorpay';
-import { INSTANT_DOWNLOAD_PRICE } from '@/lib/utils/constants';
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,10 +25,9 @@ export async function POST(request: NextRequest) {
       orderAmount = validAmounts.includes(amount) ? amount : PaymentService.SUBSCRIPTION_AMOUNT;
       receipt = `sub_${Date.now()}`;
     } else if (type === 'instant') {
-      // Enforce minimum amount server-side. Razorpay amounts are in paise;
-      // INSTANT_DOWNLOAD_PRICE is in INR so the fallback is converted.
-      const clientAmount = amount || INSTANT_DOWNLOAD_PRICE * 100;
-      orderAmount = Math.max(clientAmount, PaymentService.MIN_INSTANT_AMOUNT);
+      // Server-side: fallback to the published price and clamp to the minimum
+      // (both in paise) so the client can never force a lower amount.
+      orderAmount = PaymentService.resolveInstantAmount(amount);
       receipt = `inst_${Date.now()}`;
     } else {
       return NextResponse.json(

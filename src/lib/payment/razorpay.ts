@@ -1,4 +1,5 @@
 import type { RazorpayOrderResponse } from '@/types';
+import { INSTANT_DOWNLOAD_PRICE } from '@/lib/utils/constants';
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID!;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET!;
@@ -8,8 +9,9 @@ const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET!;
  * Handles Razorpay orders, payments, subscriptions, and refunds.
  */
 export class PaymentService {
-  // Minimum amount for instant download in paise (₹9 = 900 paise)
-  static readonly MIN_INSTANT_AMOUNT = 900;
+  // Minimum amount for instant download in paise. Derived from the INR price
+  // constant so the server-side floor can never drift from the published price.
+  static readonly MIN_INSTANT_AMOUNT = INSTANT_DOWNLOAD_PRICE * 100;
   static readonly SUBSCRIPTION_AMOUNT = 29900; // ₹299 in paise (monthly)
   static readonly ANNUAL_SUBSCRIPTION_AMOUNT = 287000; // ₹2,870 in paise (annual, 20% off)
 
@@ -19,6 +21,18 @@ export class PaymentService {
       Authorization: `Basic ${credentials}`,
       'Content-Type': 'application/json',
     };
+  }
+
+  /**
+   * Resolve the actual order amount (in paise) for an instant download.
+   * Pure and server-side: never trusts the client. Falls back to the
+   * configured price (INR → paise) when nothing is supplied, then clamps to
+   * the minimum so the order can never be below the published price.
+   */
+  static resolveInstantAmount(clientAmount?: number): number {
+    const fallback = INSTANT_DOWNLOAD_PRICE * 100;
+    const requested = clientAmount || fallback;
+    return Math.max(requested, this.MIN_INSTANT_AMOUNT);
   }
 
   /**
