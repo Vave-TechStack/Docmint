@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -16,7 +16,6 @@ export async function GET(request: NextRequest) {
     const pageSize = parseInt(searchParams.get('pageSize') || '20');
     const search = searchParams.get('search') || '';
     const role = searchParams.get('role') || '';
-    const plan = searchParams.get('plan') || '';
     const status = searchParams.get('status') || '';
 
     const where: Record<string, unknown> = { deletedAt: null };
@@ -74,7 +73,7 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -90,7 +89,7 @@ export async function PATCH(request: NextRequest) {
         await prisma.user.update({ where: { id: userId }, data: { isActive: false } });
         await prisma.auditLog.create({
           data: {
-            organizationId: (session.user as any).organizationId,
+            organizationId: session.user.organizationId ?? '',
             userId: session.user.id,
             action: 'USER_SUSPENDED',
             entity: 'User',

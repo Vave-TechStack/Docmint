@@ -12,21 +12,28 @@ import {
   Plus,
   Clock,
   Star,
-  Archive,
   TrendingUp,
   Loader2,
   ArrowRight,
   FileEdit,
   Download,
-  Share2,
   MoreHorizontal,
 } from 'lucide-react';
+
+interface RecentDocument {
+  id: string;
+  title: string;
+  documentType: string;
+  status: string;
+  version: number;
+  updatedAt: string;
+}
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [stats, setStats] = useState({ total: 0, drafts: 0, completed: 0, favorites: 0 });
-  const [recentDocs, setRecentDocs] = useState<any[]>([]);
+  const [recentDocs, setRecentDocs] = useState<RecentDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -159,7 +166,7 @@ export default function DashboardPage() {
         <CardContent>
           {recentDocs.length > 0 ? (
             <div className="space-y-3">
-              {recentDocs.map((doc: any) => (
+              {recentDocs.map((doc) => (
                 <Link
                   key={doc.id}
                   href={`/documents/${doc.id}`}

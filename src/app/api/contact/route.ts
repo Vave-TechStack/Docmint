@@ -77,6 +77,6 @@ export async function POST(request: Request) {
 
 // Augment global for rate limiting
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __contactRateLimit: Map<string, number> | undefined;
 }

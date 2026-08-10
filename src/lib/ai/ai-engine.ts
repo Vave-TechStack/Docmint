@@ -187,7 +187,7 @@ export class AIEngine {
       persuasive: 'Use persuasive, compelling language.',
     };
 
-    let systemPrompt = `You are DocMint AI, a professional business document writing assistant. 
+    const systemPrompt = `You are DocMint AI, a professional business document writing assistant. 
       ${toneMap[request.tone || 'professional'] || toneMap.professional}
       Generate clean, well-formatted business content.`;
 
@@ -201,6 +201,7 @@ export class AIEngine {
     prompt: string,
     request: AIGenerationRequest
   ): Promise<AIGenerationResponse> {
+    void request; // reserved for future provider options (e.g. model selection)
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -236,6 +237,7 @@ export class AIEngine {
     prompt: string,
     _request: AIGenerationRequest
   ): Promise<AIGenerationResponse> {
+    void _request; // reserved for future provider options (e.g. model selection)
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`,
       {

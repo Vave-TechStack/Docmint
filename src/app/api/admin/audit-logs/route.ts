@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     const entity = searchParams.get('entity') || '';
 
     const where: Record<string, unknown> = {};
-    if (action) where.action = action as any;
+    if (action) where.action = action;
     if (entity) where.entity = entity;
 
     const [logs, total] = await Promise.all([

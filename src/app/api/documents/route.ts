@@ -24,8 +24,9 @@ export async function GET(request: NextRequest) {
       sortOrder: (searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc',
     };
 
+    const orgId = session.user.organizationId!;
     const result = await DocumentEngine.list(
-      session.user.organizationId,
+      orgId,
       session.user.id,
       options
     );
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const document = await DocumentEngine.create(
       body,
-      session.user.organizationId,
+      session.user.organizationId!,
       session.user.id
     );
 

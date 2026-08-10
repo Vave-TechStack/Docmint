@@ -1,20 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import toast from 'react-hot-toast';
 import {
   Users as UsersIcon,
-  Search,
   Shield,
   ShieldOff,
   Trash2,
-  AlertTriangle,
   Loader2,
-  MoreHorizontal,
   CheckCircle2,
   XCircle,
 } from 'lucide-react';
@@ -42,7 +39,6 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(1);
 
   const fetchUsers = useCallback(async () => {
-    setIsLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '20' });
       if (search) params.set('search', search);
@@ -55,12 +51,15 @@ export default function AdminUsersPage() {
         setTotal(data.total || 0);
       }
     } catch (err) {
-      console.error(err);
+      console.error('Users fetch error:', err);
+      toast.error('Failed to load users');
     } finally {
       setIsLoading(false);
     }
   }, [page, search, roleFilter]);
 
+  // Intentional: fetch on mount/filter change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const handleAction = async (userId: string, action: string) => {

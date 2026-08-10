@@ -113,11 +113,12 @@ async function main() {
 }
 
 main()
-  .catch((e: any) => {
-    if (e.code === 'ECONNREFUSED') {
+  .catch((e: unknown) => {
+    const err = e as { code?: string; message?: string };
+    if (err.code === 'ECONNREFUSED') {
       console.error('\n❌ Could not connect to database. Is it running?');
     } else {
-      console.error('❌ Failed:', e.message || e);
+      console.error('❌ Failed:', err.message || e);
     }
     process.exit(1);
   })

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { PaymentService } from '@/lib/payment/razorpay';
-import { PREMIUM_PRICE, INSTANT_DOWNLOAD_PRICE } from '@/lib/utils/constants';
+import { INSTANT_DOWNLOAD_PRICE } from '@/lib/utils/constants';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +21,9 @@ export async function POST(request: NextRequest) {
     let receipt: string;
 
     if (type === 'subscription') {
-      orderAmount = PaymentService.SUBSCRIPTION_AMOUNT; // ₹299 in paise
+      // Allow both monthly (₹299) and annual (₹2,870) amounts
+      const validAmounts = [PaymentService.SUBSCRIPTION_AMOUNT, PaymentService.ANNUAL_SUBSCRIPTION_AMOUNT];
+      orderAmount = validAmounts.includes(amount) ? amount : PaymentService.SUBSCRIPTION_AMOUNT;
       receipt = `sub_${Date.now()}`;
     } else if (type === 'instant') {
       // Enforce minimum amount server-side

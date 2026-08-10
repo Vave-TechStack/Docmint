@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
@@ -15,10 +15,10 @@ import {
   Eye,
   Clock,
   AlertTriangle,
-  CheckCircle2,
   Share2,
   Shield,
 } from 'lucide-react';
+import { replaceSvgDataUris } from '@/lib/utils/image-placeholders';
 
 interface SharedDocument {
   id: string;
@@ -42,7 +42,7 @@ export default function SharedDocumentPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  const fetchDocument = async (pass?: string) => {
+  const fetchDocument = useCallback(async (pass?: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -68,11 +68,13 @@ export default function SharedDocumentPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
+    // Intentional: load the shared document on mount / token change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchDocument();
-  }, [token]);
+  }, [token, fetchDocument]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -248,7 +250,7 @@ export default function SharedDocumentPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm">
             <div
               className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: sharedDoc.htmlContent }}
+              dangerouslySetInnerHTML={{ __html: replaceSvgDataUris(sharedDoc.htmlContent) }}
             />
           </div>
         )}

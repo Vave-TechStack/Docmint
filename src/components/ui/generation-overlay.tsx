@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, FileText, FileDown } from 'lucide-react';
+import { FileText, FileDown } from 'lucide-react';
 
 interface GenerationOverlayProps {
   /** Whether the overlay is visible */
@@ -11,6 +11,13 @@ interface GenerationOverlayProps {
   /** Optional custom message */
   message?: string;
 }
+
+const STEPS = [
+  'Preparing your document...',
+  'Applying formatting...',
+  'Generating file...',
+  'Almost done...',
+];
 
 /**
  * Full-screen overlay shown during PDF/DOCX generation
@@ -22,28 +29,27 @@ export function GenerationOverlay({
   message,
 }: GenerationOverlayProps) {
   const [step, setStep] = useState(0);
-  const steps = [
-    'Preparing your document...',
-    'Applying formatting...',
-    'Generating file...',
-    'Almost done...',
-  ];
+  const [prevShow, setPrevShow] = useState(show);
+
+  // Reset progress whenever the overlay is hidden — the React-recommended
+  // adjust-state-during-render pattern, so no setState happens inside the effect.
+  if (show !== prevShow) {
+    setPrevShow(show);
+    if (!show) setStep(0);
+  }
 
   // Animate through steps while generating
   useEffect(() => {
-    if (!show) {
-      setStep(0);
-      return;
-    }
+    if (!show) return;
     const interval = setInterval(() => {
-      setStep((prev) => (prev < steps.length - 1 ? prev + 1 : prev));
+      setStep((prev) => (prev < STEPS.length - 1 ? prev + 1 : prev));
     }, 2500);
     return () => clearInterval(interval);
   }, [show]);
 
   if (!show) return null;
 
-  const displayMessage = message || steps[step];
+  const displayMessage = message || STEPS[step];
   const formatLabel = format.toUpperCase();
 
   return (
@@ -87,13 +93,13 @@ export function GenerationOverlay({
           <div className="w-full mt-6 bg-gray-100 rounded-full h-1.5 overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-1000 ease-out"
-              style={{ width: `${Math.min((step + 1) / steps.length * 100, 95)}%` }}
+              style={{ width: `${Math.min((step + 1) / STEPS.length * 100, 95)}%` }}
             />
           </div>
 
           {/* Step indicator */}
           <div className="flex items-center gap-1.5 mt-3">
-            {steps.map((_, i) => (
+            {STEPS.map((_, i) => (
               <div
                 key={i}
                 className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${

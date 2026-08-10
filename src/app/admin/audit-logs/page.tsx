@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';import {
+import { Badge } from '@/components/ui/badge';
+import {
   Loader2, ClipboardList, Clock
 } from 'lucide-react';
 
@@ -29,7 +29,6 @@ export default function AdminAuditLogsPage() {
   const [total, setTotal] = useState(0);
 
   const fetchLogs = useCallback(async () => {
-    setIsLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '50' });
       if (entityFilter) params.set('entity', entityFilter);
@@ -44,6 +43,8 @@ export default function AdminAuditLogsPage() {
     finally { setIsLoading(false); }
   }, [page, entityFilter]);
 
+  // Intentional: fetch on mount/filter change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
   const getActionColor = (action: string): 'default' | 'success' | 'warning' | 'danger' | 'secondary' => {

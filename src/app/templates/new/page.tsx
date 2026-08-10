@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -9,6 +9,8 @@ import { DocumentEditor } from '@/components/editor/document-editor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DOCUMENT_CATEGORIES } from '@/lib/utils/constants';
+import { extractPlaceholders } from '@/lib/utils/placeholders';
+import { isImageFieldKey, inferImageSubtype } from '@/lib/utils/image-upload';
 import {
   ArrowLeft,
   Save,
@@ -18,10 +20,6 @@ import {
   Variable,
   Plus,
   Trash2,
-  GripVertical,
-  Check,
-  X,
-  FileText,
 } from 'lucide-react';
 
 interface VariableDef {
@@ -36,7 +34,7 @@ interface VariableDef {
 }
 
 export default function NewTemplatePage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const router = useRouter();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -51,13 +49,8 @@ export default function NewTemplatePage() {
 
   const handleEditorChange = useCallback((html: string) => {
     setHtmlContent(html);
-    // Auto-detect placeholders from HTML
-    const regex = /\{\{([\w.-]+)\}\}/g;
-    const detected: string[] = [];
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      if (!detected.includes(match[1])) detected.push(match[1]);
-    }
+    // Auto-detect placeholders from HTML (shared util — matches the template engine)
+    const detected = extractPlaceholders(html);
     setDetectedPlaceholders(detected);
 
     // Auto-add variables for detected placeholders not already defined
@@ -88,8 +81,10 @@ export default function NewTemplatePage() {
     if (lower.includes('date') || lower.includes('joining') || lower.includes('created')) return 'date';
     if (lower.includes('email')) return 'email';
     if (lower.includes('salary') || lower.includes('amount') || lower.includes('price')) return 'number';
-    if (lower.includes('photo') || lower.includes('logo') || lower.includes('image')) return 'image';
-    if (lower.includes('signature') || lower.includes('sign')) return 'signature';
+    // Only image-eligible fields (logo/sign/stamp/header/…) may be image or
+    // signature — word-safe, so "Designation" stays text.
+    const imageSubtype = inferImageSubtype(key);
+    if (imageSubtype) return imageSubtype;
     if (lower.includes('address') || lower.includes('note') || lower.includes('terms')) return 'textarea';
     if (lower.includes('gender') || lower.includes('type') || lower.includes('status')) return 'select';
     return 'text';
@@ -136,7 +131,7 @@ export default function NewTemplatePage() {
           description: description.trim() || undefined,
           htmlTemplate: htmlContent || undefined,
           content: { html: htmlContent },
-          variables: variables.map(({ id, ...v }) => v),
+          variables: variables.map(({ id, ...v }) => { void id; return v; }),
           category,
           visibility,
         }),
@@ -331,10 +326,18 @@ export default function NewTemplatePage() {
                           value={variable.type}
                           onChange={(e) => updateVariable(variable.id, { type: e.target.value as VariableDef['type'] })}
                           className="flex-1 rounded border border-gray-200 px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500"
+                          title={isImageFieldKey(variable.key) ? undefined : 'Image/signature uploads are only allowed for logo, sign, stamp, seal and header fields'}
                         >
-                          {['text', 'number', 'date', 'email', 'textarea', 'select', 'image', 'signature'].map((t) => (
-                            <option key={t} value={t}>{t}</option>
-                          ))}
+                          {['text', 'number', 'date', 'email', 'textarea', 'select', 'image', 'signature'].map((t) => {
+                            const isImageType = t === 'image' || t === 'signature';
+                            // Only image-eligible keys may pick image/signature type
+                            const allowed = !isImageType || isImageFieldKey(variable.key);
+                            return (
+                              <option key={t} value={t} disabled={!allowed && variable.type !== t}>
+                                {t}
+                              </option>
+                            );
+                          })}
                         </select>
                         <label className="flex items-center gap-1 text-xs text-gray-500">
                           <input

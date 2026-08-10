@@ -1,27 +1,27 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { DOCUMENT_CATEGORIES } from '@/lib/utils/constants';
+import { getTemplateThumbnail } from '@/lib/utils/image-placeholders';
 import {
   Search,
   Plus,
   LayoutGrid,
   List as ListIcon,
-  Star,
   Clock,
   TrendingUp,
   Filter,
-  ChevronDown,
   Loader2,
   FileText,
   Users,
-  Globe,
+  Zap,
   Crown,
+  PenTool,
 } from 'lucide-react';
 
 interface TemplateListItem {
@@ -41,15 +41,17 @@ interface TemplateListItem {
   user?: { name: string; image?: string } | null;
 }
 
+// Instant (₹1) = PUBLIC & non-premium → the no-login ₹1 download flow.
+// Premium = isPremium flag → subscription-gated downloads.
 const VISIBILITY_FILTERS = [
   { value: '', label: 'All Templates', icon: LayoutGrid },
-  { value: 'PUBLIC', label: 'Public', icon: Globe },
+  { value: 'INSTANT', label: 'Instant (₹1)', icon: Zap },
   { value: 'PREMIUM', label: 'Premium', icon: Crown },
   { value: 'PRIVATE', label: 'My Templates', icon: Users },
 ];
 
 function TemplatesPageContent() {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const searchParams = useSearchParams();
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -63,6 +65,8 @@ function TemplatesPageContent() {
     if (cat) {
       const decoded = decodeURIComponent(cat);
       const known = DOCUMENT_CATEGORIES.find(c => c.name === decoded);
+      // Intentional: sync the selected category with the URL param.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (known) setSelectedCategory(known.name);
     }
   }, [searchParams]);
@@ -73,15 +77,33 @@ function TemplatesPageContent() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFilters, setShowFilters] = useState(false);
 
-  const fetchTemplates = useCallback(async (searchTerm = search, pageNum = page) => {
+  // Latest-value ref so the debounced search effect can read the current term
+  // without making fetchTemplates (and the effects that depend on it) change
+  // on every keystroke — which would defeat the debounce with unthrottled refetches.
+  const searchRef = useRef(search);
+
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+
+  const fetchTemplates = useCallback(async (searchTerm?: string, pageNum?: number) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedCategory) params.set('category', selectedCategory);
-      if (selectedVisibility) params.set('type', selectedVisibility);
+      if (selectedVisibility === 'INSTANT') {
+        // Instant (₹1): PUBLIC visibility AND explicitly not premium.
+        params.set('type', 'PUBLIC');
+        params.set('isPremium', 'false');
+      } else if (selectedVisibility === 'PREMIUM') {
+        // Premium templates keep visibility PUBLIC but carry the isPremium flag.
+        params.set('isPremium', 'true');
+      } else if (selectedVisibility) {
+        params.set('type', selectedVisibility);
+      }
       if (searchTerm) params.set('search', searchTerm);
       params.set('sortBy', sortBy);
-      params.set('page', String(pageNum));
+      params.set('page', String(pageNum ?? page));
       params.set('pageSize', '24');
 
       const res = await fetch(`/api/templates?${params}`);
@@ -94,22 +116,21 @@ function TemplatesPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory, selectedVisibility, sortBy, search, page]);
-
-  useEffect(() => {
-    fetchTemplates();
   }, [selectedCategory, selectedVisibility, sortBy, page]);
 
   useEffect(() => {
+    // Intentional: refetch when filters change (reads the latest search term).
+    fetchTemplates(searchRef.current);
+  }, [selectedCategory, selectedVisibility, sortBy, page, fetchTemplates]);
+
+  useEffect(() => {
     const delay = setTimeout(() => {
-      if (search !== undefined) {
-        setPage(1);
-        // Fetch with new page=1 and the latest search term
-        fetchTemplates(search, 1);
-      }
+      // Fetch with new page=1 and the latest search term
+      setPage(1);
+      fetchTemplates(searchRef.current, 1);
     }, 300);
     return () => clearTimeout(delay);
-  }, [search]);
+  }, [search, fetchTemplates]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
@@ -139,12 +160,20 @@ function TemplatesPageContent() {
                 </button>
               </div>
               {session && (
-                <Link href="/templates/new">
-                  <Button>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create Template
-                  </Button>
-                </Link>
+                <>
+                  <Link href="/payslip-designer">
+                    <Button variant="outline">
+                      <PenTool className="w-4 h-4 mr-2" />
+                      Payslip Designer
+                    </Button>
+                  </Link>
+                  <Link href="/templates/new">
+                    <Button>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create Template
+                    </Button>
+                  </Link>
+                </>
               )}
             </div>
           </div>
@@ -267,30 +296,26 @@ function TemplatesPageContent() {
                 href={`/templates/${template.id}`}
                 className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg hover:border-blue-200 transition-all duration-200"
               >
-                {/* Thumbnail */}
-                <div className="h-36 bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center relative overflow-hidden">
-                  {template.thumbnail ? (
-                    <img src={template.thumbnail} alt={template.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="text-center">
-                      <FileText className="w-10 h-10 text-gray-300 group-hover:text-blue-400 transition-colors" />
-                      <p className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider">
-                        {template.documentCategory}
-                      </p>
-                    </div>
-                  )}
-                  {/* Badges */}
+                {/* Thumbnail — real image or a generated category-branded placeholder */}
+                <div className="h-36 relative overflow-hidden">
+                  <Image
+                    src={template.thumbnail || getTemplateThumbnail(template.name, template.documentCategory)}
+                    alt={template.name}
+                    fill
+                    unoptimized
+                    className="object-cover"
+                  />
+                  {/* Badges — Instant (₹1) vs Premium segregation */}
                   <div className="absolute top-2 right-2 flex gap-1">
-                    {template.isPremium && (
+                    {template.isPremium ? (
                       <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-semibold shadow-sm">
                         PREMIUM
                       </span>
-                    )}
-                    {template.visibility === 'PUBLIC' && (
-                      <span className="px-1.5 py-0.5 rounded-md bg-green-500 text-white text-[10px] font-semibold shadow-sm">
-                        FREE
+                    ) : template.visibility === 'PUBLIC' ? (
+                      <span className="px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-600 to-indigo-500 text-white text-[10px] font-semibold shadow-sm">
+                        ₹1 INSTANT
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
                 {/* Info */}
@@ -361,8 +386,8 @@ function TemplatesPageContent() {
                           Premium
                         </span>
                       ) : (
-                        <span className="text-xs px-2 py-1 rounded-full bg-green-50 text-green-700 font-medium">
-                          {template.visibility === 'PUBLIC' ? 'Free' : 'Private'}
+                        <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">
+                          {template.visibility === 'PUBLIC' ? 'Instant ₹1' : 'Private'}
                         </span>
                       )}
                     </td>

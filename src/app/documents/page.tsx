@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -84,7 +84,7 @@ export default function DocumentsPage() {
 
   // Folders
   const [folders, setFolders] = useState<FolderData[]>([]);
-  const [showFolders, setShowFolders] = useState(true);
+  const [, setShowFolders] = useState(true);
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
@@ -95,6 +95,15 @@ export default function DocumentsPage() {
   const [showTags, setShowTags] = useState(false);
 
   // Context menu
+  // Latest-value ref so the debounced search effect can read the current term
+  // without making fetchDocuments (and the effects that depend on it) change
+  // on every keystroke — which would defeat the debounce with unthrottled refetches.
+  const searchRef = useRef(search);
+
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+
   // Fetch documents with explicit params to avoid stale closures
   const fetchDocuments = useCallback(async (pageNum?: number) => {
     setIsLoading(true);
@@ -110,7 +119,7 @@ export default function DocumentsPage() {
       if (filter === 'drafts') params.set('status', 'DRAFT');
       if (selectedFolder) params.set('folderId', selectedFolder);
       if (selectedTag) params.set('tags', selectedTag);
-      if (search) params.set('search', search);
+      if (searchRef.current) params.set('search', searchRef.current);
 
       const res = await fetch(`/api/documents?${params}`);
       const data = await res.json();
@@ -124,7 +133,7 @@ export default function DocumentsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [filter, selectedFolder, selectedTag, search, sortBy, page]);
+  }, [filter, selectedFolder, selectedTag, sortBy, page]);
 
   // Fetch folders
   const fetchFolders = useCallback(async () => {
@@ -148,19 +157,23 @@ export default function DocumentsPage() {
     if (status === 'unauthenticated') router.push('/login');
   }, [status, router]);
 
-  // Initial data fetch (runs once when session is ready)
+  // Initial data fetch for folders/tags (runs once when session is ready).
+  // Documents load through the filter effect below, which also fires on mount.
   useEffect(() => {
     if (session) {
+      // Intentional: initial data load after sign-in.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchFolders();
       fetchTags();
-      fetchDocuments(); // This + the filter effect below both fire on mount
     }
-  }, [session]);
+  }, [session, fetchFolders, fetchTags]);
 
   // Refetch when filters change (also triggers on mount due to page=1)
   useEffect(() => {
+    // Intentional: refetch when filters change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (session) fetchDocuments();
-  }, [filter, selectedFolder, selectedTag, sortBy, page]);
+  }, [session, filter, selectedFolder, selectedTag, sortBy, page, fetchDocuments]);
 
   // Search debounce (reset to page 1, pass page explicitly)
   useEffect(() => {
@@ -170,7 +183,7 @@ export default function DocumentsPage() {
       fetchDocuments(1); // Pass page=1 explicitly to avoid stale closure
     }, 300);
     return () => clearTimeout(delay);
-  }, [search]);
+  }, [search, session, fetchDocuments]);
 
   // ─── Folder Actions ───
 
@@ -306,8 +319,6 @@ export default function DocumentsPage() {
       </div>
     );
   }
-
-  const activeFiltersCount = [filter !== 'all', selectedFolder, selectedTag].filter(Boolean).length;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex bg-gray-50/50">

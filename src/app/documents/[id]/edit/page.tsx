@@ -8,7 +8,20 @@ import toast from 'react-hot-toast';
 import { DocumentEditor } from '@/components/editor/document-editor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ArrowLeft, Save, Download, Eye, Loader2, Clock, History, Share2, Copy, Link as LinkIcon, Shield, Calendar, X, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Save, Download, Eye, Loader2, Clock, Share2, Copy, Link as LinkIcon, Shield, Calendar, X, CheckCircle2 } from 'lucide-react';
+import { DocumentExportMenu } from '@/components/document-export-menu';
+
+interface ShareLink {
+  id: string;
+  shareType: string;
+  shareUrl: string;
+  token: string;
+  password?: string;
+  expiresAt?: string;
+  downloadCount: number;
+  maxDownloads?: number;
+  createdAt: string;
+}
 
 export default function EditDocumentPage() {
   const { data: session, status } = useSession();
@@ -23,8 +36,8 @@ export default function EditDocumentPage() {
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [version, setVersion] = useState(1);
   const [showShareDialog, setShowShareDialog] = useState(false);
-  const [shares, setShares] = useState<any[]>([]);
-  const [shareLoading, setShareLoading] = useState(false);
+  const [shares, setShares] = useState<ShareLink[]>([]);
+  const [, setShareLoading] = useState(false);
   const [shareForm, setShareForm] = useState<{
     shareType: 'LINK' | 'EMAIL' | 'WHATSAPP';
     recipient: string;
@@ -41,17 +54,7 @@ export default function EditDocumentPage() {
   const [creatingShare, setCreatingShare] = useState(false);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (status === 'unauthenticated') {
-      router.push('/login');
-      return;
-    }
-    if (status === 'authenticated' && params.id) {
-      fetchDocument();
-    }
-  }, [status, params.id, router]);
-
-  const fetchDocument = async () => {
+  const fetchDocument = useCallback(async () => {
     try {
       const res = await fetch(`/api/documents/${params.id}`);
       const data = await res.json();
@@ -71,7 +74,19 @@ export default function EditDocumentPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [params.id, router]);
+
+  useEffect(() => {
+    if (status === 'unauthenticated') {
+      router.push('/login');
+      return;
+    }
+    if (status === 'authenticated' && params.id) {
+      // Intentional: load the document once auth + id are available.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchDocument();
+    }
+  }, [status, params.id, router, fetchDocument]);
 
   const handleEditorChange = useCallback((html: string) => {
     setHtmlContent(html);
@@ -221,6 +236,7 @@ export default function EditDocumentPage() {
             <Share2 className="w-4 h-4 mr-1.5" />
             Share
           </Button>
+          <DocumentExportMenu html={htmlContent} title={title} />
           <Button onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
             Save
@@ -266,10 +282,10 @@ export default function EditDocumentPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Share Type</label>
                   <div className="flex gap-2">
-                    {['LINK', 'EMAIL', 'WHATSAPP'].map((type) => (
+                    {(['LINK', 'EMAIL', 'WHATSAPP'] as const).map((type) => (
                       <button
                         key={type}
-                        onClick={() => setShareForm(f => ({ ...f, shareType: type as any }))}
+                        onClick={() => setShareForm(f => ({ ...f, shareType: type }))}
                         className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border transition-all ${
                           shareForm.shareType === type
                             ? 'border-blue-500 bg-blue-50 text-blue-700'

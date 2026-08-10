@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { TemplateEngine } from '@/lib/engine/template-engine';
-import { querySampleTemplates } from '@/lib/data/sample-templates';
+import { querySampleTemplates, sampleToTemplateData } from '@/lib/data/sample-templates';
+import { validateVariableDefaultImages } from '@/lib/utils/image-upload';
 
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();
     const { searchParams } = new URL(request.url);
 
+    const isPremiumParam = searchParams.get('isPremium');
+    const isPremium = isPremiumParam === 'true' ? true : isPremiumParam === 'false' ? false : undefined;
+
     const options = {
       documentCategory: searchParams.get('category') || undefined,
       visibility: searchParams.get('type') || undefined,
-      isPremium: searchParams.get('isPremium') === 'true' ? true : undefined,
+      isPremium,
       search: searchParams.get('search') || undefined,
       slug: searchParams.get('slug') || undefined,
       page: parseInt(searchParams.get('page') || '1'),
@@ -34,6 +38,15 @@ export async function GET(request: NextRequest) {
 
     // Fallback: return static sample templates
     const fallbackResult = querySampleTemplates(options);
+
+    // Slug lookup (instant page) needs the full template shape — typed variables
+    // + generated HTML — else the form renders no editable fields. Merge keeps
+    // the list metadata (placeholders, category, user) alongside the full data.
+    if (options.slug && fallbackResult.data.length === 1) {
+      const full = sampleToTemplateData(fallbackResult.data[0]);
+      fallbackResult.data = [{ ...full, ...fallbackResult.data[0] }];
+    }
+
     return NextResponse.json({ success: true, ...fallbackResult, usingFallback: true });
   } catch (error) {
     console.error('Templates list error:', error);
@@ -52,9 +65,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Enforce the shared image whitelist + size policy on variable defaults
+    const imageError = validateVariableDefaultImages((body as { variables?: unknown }).variables);
+    if (imageError) {
+      return NextResponse.json(
+        { success: false, error: imageError },
+        { status: 400 }
+      );
+    }
+
     const template = await TemplateEngine.create(
       body,
-      session.user.organizationId,
+      session.user.organizationId!,
       session.user.id
     );
 

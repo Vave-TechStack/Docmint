@@ -101,6 +101,8 @@ export interface DocumentVersion {
 }
 
 // ─── Template ───
+export type TemplateVisibility = 'PUBLIC' | 'PRIVATE' | 'ORGANIZATION' | 'PREMIUM' | 'AI';
+
 export interface TemplateData {
   id: string;
   name: string;
@@ -111,7 +113,7 @@ export interface TemplateData {
   htmlTemplate?: string;
   variables: TemplateVariable[];
   documentCategory: string;
-  visibility: 'PUBLIC' | 'PRIVATE' | 'ORGANIZATION' | 'PREMIUM' | 'AI';
+  visibility: TemplateVisibility;
   isPremium: boolean;
   isDefault: boolean;
   usageCount: number;

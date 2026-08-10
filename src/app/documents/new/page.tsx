@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { DocumentEditor } from '@/components/editor/document-editor';
+import { DocumentExportMenu } from '@/components/document-export-menu';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArrowLeft, Save, Eye, Loader2, FileEdit } from 'lucide-react';
@@ -141,6 +142,7 @@ export default function NewDocumentPage() {
             {savingAsTemplate ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileEdit className="w-4 h-4 mr-2" />}
             Save as Template
           </Button>
+          <DocumentExportMenu html={htmlContent} title={title} />
           {session && (
             <Button onClick={handleSave} disabled={saving}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}

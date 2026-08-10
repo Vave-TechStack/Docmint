@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { DocumentEngine } from '@/lib/engine/document-engine';
+import { DocumentEngine, extractBodyContent } from '@/lib/engine/document-engine';
+import { replaceSvgDataUris } from '@/lib/utils/image-placeholders';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,22 +50,64 @@ export async function POST(
       );
     }
 
-    // Generate PDF from HTML
-    const html = share.document.htmlContent;
+    // Generate PDF from HTML with 0.5in (12.7mm) margins on A4
+    let html = share.document.htmlContent;
+
+    // Strip outer <html>/<body> boilerplate to avoid invalid nested HTML
+    html = extractBodyContent(html);
+
+    /**
+     * Convert SVG data URI <img> tags to inline <svg> elements.
+     *
+     * Chrome/Chromium cannot load SVG data URIs in <img> tags inside
+     * sandboxed iframes (sandbox="allow-same-origin"), causing persistent
+     * "Error loading svg data:..." console errors. Converting to inline
+     * <svg> eliminates the loading step — SVGs render directly in the DOM.
+     *
+     * @see replaceSvgDataUris in lib/utils/image-placeholders.ts
+     */
+    html = replaceSvgDataUris(html);
+
+    // Add onerror fallback to remaining img tags for non-SVG broken images
+    html = html.replace(
+      /(<img\s[^>]*?)(?:(\s+onerror\s*=\s*['"][^'"]*['"]))?([^>]*>)/gi,
+      (match, before, existingOnerror, after) => {
+        if (existingOnerror) return match;
+        return `${before} onerror="this.style.display='none'"${after}`;
+      }
+    );
+
     const styledHtml = `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="utf-8">
         <style>
-          body { font-family: 'Inter', Arial, sans-serif; padding: 40px; line-height: 1.6; color: #333; }
-          h1, h2, h3 { color: #111; }
-          table { border-collapse: collapse; width: 100%; }
-          td, th { border: 1px solid #ddd; padding: 8px; }
-          @media print { body { padding: 0; } }
+          *{box-sizing:border-box;margin:0;padding:0}
+          body {
+            font-family: 'Inter', Arial, sans-serif;
+            padding: 12.7mm;
+            max-width: 210mm;
+            min-height: 297mm;
+            margin: 0 auto;
+            line-height: 1.6;
+            color: #333;
+            overflow: hidden;
+            word-wrap: break-word;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          h1, h2, h3 { color: #111; margin-top: 16px; margin-bottom: 8px; }
+          p { margin-bottom: 8px; }
+          table { border-collapse: collapse; width: 100%; margin: 12px 0; table-layout: fixed; }
+          td, th { border: 1px solid #ddd; padding: 6px 8px; text-align: left; word-wrap: break-word; }
+          th { background: #f8f9fa; font-weight: 600; }
+          img { max-width: 100%; height: auto; }
+          .page-content { max-width: 184.6mm; margin: 0 auto; }
+          @media print { body { padding: 12.7mm; overflow: visible; } }
         </style>
       </head>
-      <body>${html}</body>
+      <body><div class="page-content">${html}</div></body>
       </html>
     `;
 

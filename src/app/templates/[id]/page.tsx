@@ -1,17 +1,21 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
+import { ALLOWED_IMAGE_TYPES_ACCEPT, IMAGE_UPLOAD_MAX_MB } from '@/lib/utils/constants';
+import { validateImageUpload, isImageFieldKey } from '@/lib/utils/image-upload';
+import { injectCustomSections } from '@/lib/utils/custom-sections';
+import type { CustomSections, CustomSectionField } from '@/lib/utils/custom-sections';
+import { CustomContentCard } from '@/components/custom-content-card';
 import {
   ArrowLeft,
   Edit3,
   Copy,
   Trash2,
-  Star,
   Download,
   Eye,
   FileText,
@@ -21,7 +25,7 @@ import {
   Globe,
   Lock,
   Crown,
-  Users,
+  Zap,
   CheckCircle2,
   AlertTriangle,
   X,
@@ -29,11 +33,12 @@ import {
   PenSquare,
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
-import { getDefaultImageForPlaceholder } from '@/lib/utils/image-placeholders';
-import { FileDown, FileSpreadsheet } from 'lucide-react';
+import { getDefaultImageForPlaceholder, replaceSvgDataUris, rasterizeSvgPlaceholders, isValidImageSource } from '@/lib/utils/image-placeholders';
+import { FileDown, FileSpreadsheet, PenTool } from 'lucide-react';
 
 interface TemplateDetail {
   id: string;
+  userId?: string;
   name: string;
   slug: string;
   description?: string;
@@ -76,6 +81,83 @@ export default function TemplateDetailPage() {
   const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'docx'>('pdf');
   const [downloading, setDownloading] = useState(false);
   const [downloadingSample, setDownloadingSample] = useState(false);
+  // User-added custom content (logo / header / footer / extra text fields)
+  const [customLogo, setCustomLogo] = useState('');
+  const [customHeader, setCustomHeader] = useState('');
+  const [customFooter, setCustomFooter] = useState('');
+  const [customFields, setCustomFields] = useState<CustomSectionField[]>([]);
+  // Premium subscription state (unlocks premium template downloads)
+  const [subscription, setSubscription] = useState<{ status: string; endDate: string } | null>(null);
+  const [checkingSubscription, setCheckingSubscription] = useState(false);
+
+  // ─── Client-side PDF generation using jsPDF ───
+  const generatePDFClientSide = async (rawHtml: string, fileName: string): Promise<void> => {
+    let html = replaceSvgDataUris(rawHtml || '');
+    // jsPDF's doc.html() renders via html2canvas, which cannot load SVG images
+    // in ANY form (inline <svg> logs "Error loading svg data:..."; base64 SVG
+    // data-URI <img> tags log "Error loading image data:image/svg+xml;base64,...")
+    // and drops them from the PDF. Rasterize SVGs to PNG data URIs right before
+    // PDF generation — PNGs load fine there. The sandboxed-iframe preview keeps
+    // the inline <svg> form (replaceSvgDataUris) — this only affects the PDF path.
+    html = await rasterizeSvgPlaceholders(html);
+    html = html.replace(
+      /(<img\s[^>]*?)(?:(\s+onerror\s*=\s*['"][^'"]*['"]))?([^>]*>)/gi,
+      (match, before, existingOnerror, after) => {
+        if (existingOnerror) return match;
+        return `${before} onerror="this.style.display='none'"${after}`;
+      }
+    );
+    const { jsPDF } = await import('jspdf');
+    return new Promise((resolve) => {
+      let resolved = false;
+      const fallbackToPrint = () => {
+        if (resolved) return;
+        resolved = true;
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(html);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => printWindow.print(), 500);
+        }
+        resolve();
+      };
+      const timeout = setTimeout(fallbackToPrint, 15000);
+      try {
+        const doc = new jsPDF({ format: 'a4', unit: 'mm', orientation: 'portrait' });
+        doc.html(html, {
+          callback: (doc) => {
+            clearTimeout(timeout);
+            if (resolved) return;
+            resolved = true;
+            try {
+              const pdfBlob = doc.output('blob');
+              const url = window.URL.createObjectURL(pdfBlob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = fileName;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              window.URL.revokeObjectURL(url);
+              resolve();
+            } catch { fallbackToPrint(); }
+          },
+          x: 15, y: 15, width: 180, windowWidth: 794,
+          autoPaging: 'text',
+          margin: [10, 10, 10, 10],
+        });
+      } catch { clearTimeout(timeout); fallbackToPrint(); }
+    });
+  };
+
+  // ─── Custom content helpers ───
+  const getCustomSections = (): CustomSections => ({
+    logo: customLogo || undefined,
+    header: customHeader || undefined,
+    footer: customFooter || undefined,
+    fields: customFields,
+  });
 
   // ─── Shared Download Helper ───
   const triggerDownload = async (format: 'pdf' | 'docx', sample = false) => {
@@ -93,6 +175,7 @@ export default function TemplateDetailPage() {
         body: JSON.stringify({
           variables: formValues,
           format,
+          customSections: getCustomSections(),
           ...(sample ? { sample: true } : {}),
         }),
       });
@@ -101,15 +184,29 @@ export default function TemplateDetailPage() {
         toast.error(err.error || 'Download failed');
         return;
       }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${template.slug || template.name}${sample ? '-sample' : ''}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+
+      if (format === 'docx') {
+        // DOCX: server returns binary blob — download directly
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${template.slug || template.name}${sample ? '-sample' : ''}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      } else {
+        // PDF: server returns JSON with HTML — generate PDF via jsPDF on the client
+        const data = await res.json();
+        if (!data.success || !data.data?.html) {
+          toast.error(data.error || 'Failed to generate document');
+          return;
+        }
+        const fileName = `${template.slug || template.name}${sample ? '-sample' : ''}.pdf`;
+        await generatePDFClientSide(data.data.html, fileName);
+      }
+
       toast.success(`${sample ? 'Sample ' : ''}${format.toUpperCase()} downloaded!`);
     } catch {
       toast.error('Download failed. Please try again.');
@@ -118,11 +215,7 @@ export default function TemplateDetailPage() {
     }
   };
 
-  useEffect(() => {
-    if (params.id) fetchTemplate();
-  }, [params.id]);
-
-  const fetchTemplate = async () => {
+  const fetchTemplate = useCallback(async () => {
     try {
       const res = await fetch(`/api/templates/${params.id}`);
       const data = await res.json();
@@ -144,7 +237,34 @@ export default function TemplateDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [params.id, router]);
+
+  useEffect(() => {
+    // Intentional: load the template once the id is available.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (params.id) fetchTemplate();
+  }, [params.id, fetchTemplate]);
+
+  const checkSubscription = useCallback(async () => {
+    if (!template?.isPremium) return;
+    setCheckingSubscription(true);
+    try {
+      const res = await fetch('/api/subscriptions');
+      if (res.status === 401) { setSubscription(null); return; }
+      const data = await res.json();
+      setSubscription(data.success && data.data ? data.data : null);
+    } catch {
+      setSubscription(null);
+    } finally {
+      setCheckingSubscription(false);
+    }
+  }, [template?.isPremium]);
+
+  useEffect(() => {
+    // Intentional: check the subscription once the premium flag is known.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    checkSubscription();
+  }, [checkSubscription]);
 
   const handleUseTemplate = async () => {
     if (!session) {
@@ -193,27 +313,61 @@ export default function TemplateDetailPage() {
       for (const [key, value] of Object.entries(formValues)) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g');
-        // Use default SVG placeholder for image fields when no image uploaded
-        const resolvedValue = value || getDefaultImageForPlaceholder(key);
+        // Check if this is an image-eligible field (logo/sign/stamp/header/…)
+        const isImgField = isImageFieldKey(key);
+        let resolvedValue: string;
+        if (value) {
+          // User entered a value - use it (validate image sources for img fields)
+          resolvedValue = (isImgField && !isValidImageSource(value))
+            ? getDefaultImageForPlaceholder(key)
+            : value;
+        } else {
+          // No value entered - use placeholder SVG for images, empty string for text
+          resolvedValue = isImgField ? getDefaultImageForPlaceholder(key) : '';
+        }
         html = html.replace(regex, resolvedValue);
       }
 
       // Step 3: Replace remaining image placeholders with default SVGs; remove others
       html = html.replace(/\{\{([\w.-]+)(?:\:[^}]+)?\}\}/g, (_match: string, key: string) => {
-        const lower = key.toLowerCase();
-        if (lower.includes('logo') || lower.includes('photo') || lower.includes('picture') ||
-            lower.includes('signature') || lower.includes('sign') || lower.includes('seal') ||
-            lower.includes('stamp') || lower.includes('heroimage') || lower.includes('imageurl') ||
-            lower.includes('cover')) {
-          return getDefaultImageForPlaceholder(key);
-        }
-        return '';
+        return isImageFieldKey(key) ? getDefaultImageForPlaceholder(key) : '';
       });
 
-      // Step 4: Hide broken img tags with empty src
-      html = html.replace(/<img([^>]*)src=""([^>]*)>/g, '<img$1src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221%22 height=%221%22%3E%3C/svg%3E"$2 style="display:none">');
+      /**
+       * Step 4: Convert SVG data URI <img> tags to inline <svg> elements.
+       *
+       * Why this is needed: Chrome/Chromium cannot load SVG data URIs in
+       * <img> tags when rendered inside a sandboxed iframe
+       * (sandbox="allow-same-origin"). This causes persistent console errors
+       * like "Error loading svg data:..." in Next.js/Turbopack dev mode.
+       * By converting <img src="data:image/svg+xml;..."> to inline <svg>,
+       * the SVGs render directly in the DOM with no loading step — no errors.
+       *
+       * @see replaceSvgDataUris in lib/utils/image-placeholders.ts
+       */
+      html = replaceSvgDataUris(html);
 
-      // Step 5: Wrap in full HTML document with A4-styled preview layout
+      // Step 5: Add onerror fallback to all img tags to silently hide broken images
+      html = html.replace(
+        /(<img\s[^>]*?)(?:(\s+onerror\s*=\s*['"][^'"]*['"]))?([^>]*>)/gi,
+        (match: string, before: string, existingOnerror: string, after: string) => {
+          if (existingOnerror) return match;
+          return `${before} onerror="this.style.display='none'"${after}`;
+        }
+      );
+
+      // Step 6: Hide img tags with empty src (prepend display:none safely)
+      html = html.replace(
+        /(<img\s[^>]*?)src=""([^>]*>)/gi,
+        (_match: string, before: string, after: string) => {
+          return `${before}src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" style="display:none"${after}`;
+        }
+      );
+
+      // Step 7: Inject user-added custom content (logo / header / footer / extra fields)
+      html = injectCustomSections(html, getCustomSections());
+
+      // Step 8: Wrap in full HTML document with A4-styled preview layout
       const styledHtml = `
         <!DOCTYPE html>
         <html>
@@ -268,13 +422,9 @@ export default function TemplateDetailPage() {
   // ─── Image Upload Handler ───
   const handleImageUpload = (key: string, file: File) => {
     setUploadingImage(key);
-    const validTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif'];
-    if (!validTypes.includes(file.type)) {
-      toast.error('Please upload PNG, JPEG, WEBP, or SVG image');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image must be under 5MB');
+    const validationError = validateImageUpload(file);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
     const reader = new FileReader();      reader.onload = (e) => {
@@ -367,7 +517,45 @@ export default function TemplateDetailPage() {
     );
   }
 
-  const isOwner = session?.user && template.visibility === 'PRIVATE';
+  // Only the template's actual creator can edit/delete it — not any logged-in
+  // user who happens to view a PRIVATE template.
+  const isOwner = !!session?.user?.id && template.userId === session.user.id;
+
+  // Premium templates require an active subscription to download (admins bypass).
+  const isAdmin = session?.user?.role === 'SUPER_ADMIN' || session?.user?.role === 'ADMIN';
+  // Client-side proxy only — the server re-checks endDate authoritatively.
+  const isSubscriber = !!subscription &&
+    (subscription.status === 'ACTIVE' || subscription.status === 'GRACE_PERIOD');
+  const isPremiumGated = template.isPremium && !isAdmin && !isSubscriber;
+
+  const premiumGateCard = (
+    <div className="mt-6 rounded-xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-6 text-center">
+      <Crown className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+      <h3 className="font-semibold text-gray-900">Premium Template</h3>
+      <p className="text-sm text-gray-600 mt-1 max-w-md mx-auto">
+        Full downloads of this template are included with DocMint Premium (₹299/mo). You can still preview and download a watermarked free sample below.
+      </p>
+      {checkingSubscription ? (
+        <div className="flex items-center justify-center gap-2 mt-4 text-sm text-gray-500">
+          <Loader2 className="w-4 h-4 animate-spin" /> Checking subscription...
+        </div>
+      ) : (
+        <>
+          <Link href="/pricing" className="inline-block mt-4">
+            <Button variant="premium" size="lg">
+              <Crown className="w-4 h-4 mr-2" />
+              Unlock with Premium
+            </Button>
+          </Link>
+          {!session && (
+            <p className="text-xs text-gray-500 mt-3">
+              <Link href="/login" className="text-blue-600 hover:underline">Sign in</Link> to subscribe.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
@@ -395,6 +583,21 @@ export default function TemplateDetailPage() {
                    <Lock className="w-3 h-3" />}
                   {template.visibility}
                 </span>
+                {template.isPremium ? (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <span className="text-xs font-semibold text-amber-600 flex items-center gap-1">
+                      <Crown className="w-3 h-3" /> PREMIUM
+                    </span>
+                  </>
+                ) : template.visibility === 'PUBLIC' ? (
+                  <>
+                    <span className="text-gray-300">·</span>
+                    <span className="text-xs font-semibold text-blue-600 flex items-center gap-1">
+                      <Zap className="w-3 h-3" /> ₹1 INSTANT
+                    </span>
+                  </>
+                ) : null}
                 <span className="text-gray-300">·</span>
                 <span className="text-xs text-gray-500 flex items-center gap-1">
                   <TrendingUp className="w-3 h-3" />
@@ -417,7 +620,7 @@ export default function TemplateDetailPage() {
                 </Button>
               </Link>
             )}
-            {session && (
+            {session && !isPremiumGated && (
               <Button size="sm" onClick={handleDuplicate} disabled={duplicating}>
                 <Copy className="w-4 h-4 mr-1.5" />
                 Duplicate
@@ -453,14 +656,20 @@ export default function TemplateDetailPage() {
                     DOCX
                   </button>
                 </div>
-                <Button
-                  size="sm"
-                  onClick={() => triggerDownload(downloadFormat)}
-                  disabled={downloading}
-                >
-                  {downloading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Download className="w-4 h-4 mr-1.5" />}
-                  {downloading ? 'Downloading...' : `Download ${downloadFormat.toUpperCase()}`}
-                </Button>
+                {isPremiumGated ? (
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600">
+                    <Lock className="w-3.5 h-3.5" /> Premium — subscribe to download
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => triggerDownload(downloadFormat)}
+                    disabled={downloading}
+                  >
+                    {downloading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Download className="w-4 h-4 mr-1.5" />}
+                    {downloading ? 'Downloading...' : `Download ${downloadFormat.toUpperCase()}`}
+                  </Button>
+                )}
                 <button
                   onClick={() => {
                     const iframe = previewIframeRef.current;
@@ -518,11 +727,12 @@ export default function TemplateDetailPage() {
                           {variable.label}
                           {variable.required && <span className="text-red-500 ml-1">*</span>}
                         </label>
-                        {variable.type === 'image' || variable.type === 'signature' ? (
-                          /* ── Image / Signature Upload ── */
+                        {isImageFieldKey(variable.key) && (variable.type === 'image' || variable.type === 'signature') ? (
+                          /* ── Image / Signature Upload (only logo/sign/stamp/header fields) ── */
                           <div>
                             {formValues[variable.key] ? (
                               <div className="relative inline-block">
+                                {/* eslint-disable-next-line @next/next/no-img-element -- base64 data-URL upload, content-sized parent, unknown dims; unoptimized next/image is a passthrough */}
                                 <img
                                   src={formValues[variable.key]}
                                   alt={variable.label}
@@ -550,12 +760,12 @@ export default function TemplateDetailPage() {
                                     {uploadingImage === variable.key ? 'Uploading...' : (variable.type === 'signature' ? 'Upload Signature' : 'Upload Image')}
                                   </p>
                                   <p className="text-[10px] text-gray-300 mt-0.5">
-                                    PNG, JPEG, WEBP or SVG (max 5MB)
+                                    PNG, JPEG, WEBP, SVG or GIF (max {IMAGE_UPLOAD_MAX_MB}MB)
                                   </p>
                                 </div>
                                 <input
                                   type="file"
-                                  accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+                                  accept={ALLOWED_IMAGE_TYPES_ACCEPT}
                                   className="hidden"
                                   disabled={uploadingImage !== null}
                                   onChange={(e) => {
@@ -639,13 +849,15 @@ export default function TemplateDetailPage() {
                         Sample DOCX
                       </Button>
                     </div>
-                    {session && (
+                    {session && !isPremiumGated && (
                       <Button variant="default" onClick={handleUseTemplate}>
                         <FileText className="w-4 h-4 mr-2" />
                         Use This Template
                       </Button>
                     )}
                   </div>
+
+                  {isPremiumGated && premiumGateCard}
                 </div>
               ) : (
                 /* No variables - just use template */
@@ -659,7 +871,7 @@ export default function TemplateDetailPage() {
                         <Eye className="w-4 h-4 mr-2" />
                         Preview
                       </Button>
-                      {session && (
+                      {session && !isPremiumGated && (
                         <Button onClick={handleUseTemplate}>
                           <FileText className="w-4 h-4 mr-2" />
                           Create Document
@@ -688,8 +900,21 @@ export default function TemplateDetailPage() {
                       </Button>
                     </div>
                   </div>
+                  {isPremiumGated && premiumGateCard}
                 </div>
               )}
+
+              {/* Add Custom Content — logo / header / footer / extra fields */}
+              <CustomContentCard
+                logo={customLogo}
+                onLogoChange={setCustomLogo}
+                header={customHeader}
+                onHeaderChange={setCustomHeader}
+                footer={customFooter}
+                onFooterChange={setCustomFooter}
+                fields={customFields}
+                onFieldsChange={setCustomFields}
+              />
             </div>
 
             {/* Sidebar */}
@@ -698,21 +923,29 @@ export default function TemplateDetailPage() {
               <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <h3 className="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-3">Actions</h3>
                 <div className="space-y-2">
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start text-sm"
-                    onClick={handleDuplicate}
-                    disabled={duplicating}
-                  >
-                    <Copy className="w-4 h-4 mr-2" />
-                    Duplicate Template
-                  </Button>
+                  {!isPremiumGated && (
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start text-sm"
+                      onClick={handleDuplicate}
+                      disabled={duplicating}
+                    >
+                      <Copy className="w-4 h-4 mr-2" />
+                      Duplicate Template
+                    </Button>
+                  )}
                   {isOwner && (
                     <>
                       <Link href={`/templates/${template.id}/edit`}>
                         <Button variant="outline" className="w-full justify-start text-sm">
                           <Edit3 className="w-4 h-4 mr-2" />
                           Edit Template
+                        </Button>
+                      </Link>
+                      <Link href={`/payslip-designer?template=${template.id}`}>
+                        <Button variant="outline" className="w-full justify-start text-sm text-purple-700 hover:bg-purple-50 border-purple-200">
+                          <PenTool className="w-4 h-4 mr-2" />
+                          Open in Visual Designer
                         </Button>
                       </Link>
                       <Button

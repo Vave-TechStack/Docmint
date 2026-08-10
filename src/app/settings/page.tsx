@@ -15,7 +15,6 @@ import {
   Save,
   Eye,
   EyeOff,
-  CheckCircle2,
 } from 'lucide-react';
 
 const TABS = [
@@ -55,10 +54,12 @@ export default function SettingsPage() {
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login');
     if (session?.user) {
+      // Sync the editable profile form with the authenticated user (intentional).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setProfile({
-        name: (session.user as any).name || '',
-        email: (session.user as any).email || '',
-        mobile: (session.user as any).mobile || '',
+        name: session.user.name || '',
+        email: session.user.email || '',
+        mobile: session.user.mobile || '',
       });
     }
   }, [status, session, router]);
@@ -180,9 +181,9 @@ export default function SettingsPage() {
             <h3 className="text-lg font-semibold">Email Notifications</h3>
             <div className="space-y-4">
               {[
-                { key: 'emailDocs', label: 'Document updates', desc: 'When documents are shared or modified' },
-                { key: 'emailPromos', label: 'Promotions & updates', desc: 'Product updates, tips, and special offers' },
-                { key: 'emailBilling', label: 'Billing alerts', desc: 'Payment receipts, subscription renewals, and invoices' },
+                { key: 'emailDocs' as const, label: 'Document updates', desc: 'When documents are shared or modified' },
+                { key: 'emailPromos' as const, label: 'Promotions & updates', desc: 'Product updates, tips, and special offers' },
+                { key: 'emailBilling' as const, label: 'Billing alerts', desc: 'Payment receipts, subscription renewals, and invoices' },
               ].map((item) => (
                 <label key={item.key} className="flex items-center justify-between py-2">
                   <div>
@@ -191,7 +192,7 @@ export default function SettingsPage() {
                   </div>
                   <input
                     type="checkbox"
-                    checked={(notifications as any)[item.key]}
+                    checked={notifications[item.key]}
                     onChange={(e) => setNotifications(n => ({ ...n, [item.key]: e.target.checked }))}
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
@@ -201,8 +202,8 @@ export default function SettingsPage() {
             <div className="pt-4 border-t border-gray-100">
               <h3 className="text-lg font-semibold mb-4">Push Notifications</h3>
               {[
-                { key: 'pushDocs', label: 'Document notifications', desc: 'When documents are ready or updated' },
-                { key: 'pushReminders', label: 'Reminders', desc: 'Subscription renewal and expiry reminders' },
+                { key: 'pushDocs' as const, label: 'Document notifications', desc: 'When documents are ready or updated' },
+                { key: 'pushReminders' as const, label: 'Reminders', desc: 'Subscription renewal and expiry reminders' },
               ].map((item) => (
                 <label key={item.key} className="flex items-center justify-between py-2">
                   <div>
@@ -211,7 +212,7 @@ export default function SettingsPage() {
                   </div>
                   <input
                     type="checkbox"
-                    checked={(notifications as any)[item.key]}
+                    checked={notifications[item.key]}
                     onChange={(e) => setNotifications(n => ({ ...n, [item.key]: e.target.checked }))}
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />

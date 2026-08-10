@@ -9,6 +9,8 @@ import { DocumentEditor } from '@/components/editor/document-editor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DOCUMENT_CATEGORIES } from '@/lib/utils/constants';
+import { extractPlaceholders } from '@/lib/utils/placeholders';
+import { isImageFieldKey, inferImageSubtype } from '@/lib/utils/image-upload';
 import {
   ArrowLeft,
   Save,
@@ -19,6 +21,7 @@ import {
   Plus,
   Trash2,
   Clock,
+  LayoutDashboard,
 } from 'lucide-react';
 
 interface VariableDef {
@@ -32,8 +35,18 @@ interface VariableDef {
   options: string[];
 }
 
+type RawVariable = {
+  key: string;
+  label?: string;
+  type?: string;
+  required?: boolean;
+  defaultValue?: string;
+  placeholder?: string;
+  options?: string[];
+};
+
 export default function EditTemplatePage() {
-  const { data: session, status: authStatus } = useSession();
+  const { status: authStatus } = useSession();
   const router = useRouter();
   const params = useParams();
   const [loading, setLoading] = useState(true);
@@ -48,17 +61,7 @@ export default function EditTemplatePage() {
   const [showPreview, setShowPreview] = useState(false);
   const [version, setVersion] = useState(1);
 
-  useEffect(() => {
-    if (authStatus === 'unauthenticated') {
-      router.push('/login');
-      return;
-    }
-    if (authStatus === 'authenticated' && params.id) {
-      fetchTemplate();
-    }
-  }, [authStatus, params.id]);
-
-  const fetchTemplate = async () => {
+  const fetchTemplate = useCallback(async () => {
     try {
       const res = await fetch(`/api/templates/${params.id}`);
       const data = await res.json();
@@ -71,7 +74,7 @@ export default function EditTemplatePage() {
         setHtmlContent(t.htmlTemplate || '');
         setVersion(t.version || 1);
         setVariables(
-          (t.variables || []).map((v: any) => ({
+          (t.variables || []).map((v: RawVariable) => ({
             id: `var-${v.key}`,
             key: v.key,
             label: v.label || v.key,
@@ -92,17 +95,24 @@ export default function EditTemplatePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [params.id, router]);
+
+  useEffect(() => {
+    if (authStatus === 'unauthenticated') {
+      router.push('/login');
+      return;
+    }
+    if (authStatus === 'authenticated' && params.id) {
+      // Intentional: load the template once auth + id are available.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchTemplate();
+    }
+  }, [authStatus, params.id, router, fetchTemplate]);
 
   const handleEditorChange = useCallback((html: string) => {
     setHtmlContent(html);
-    // Auto-detect placeholders
-    const regex = /\{\{([\w.-]+)\}\}/g;
-    const detected: string[] = [];
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      if (!detected.includes(match[1])) detected.push(match[1]);
-    }
+    // Auto-detect placeholders (shared util — matches the template engine)
+    const detected = extractPlaceholders(html);
     // Auto-add new variables for undetected placeholders
     setVariables((prev) => {
       const existing = new Set(prev.map((v) => v.key));
@@ -131,8 +141,10 @@ export default function EditTemplatePage() {
     if (lower.includes('date') || lower.includes('joining') || lower.includes('created')) return 'date';
     if (lower.includes('email')) return 'email';
     if (lower.includes('salary') || lower.includes('amount') || lower.includes('price')) return 'number';
-    if (lower.includes('photo') || lower.includes('logo') || lower.includes('image')) return 'image';
-    if (lower.includes('signature') || lower.includes('sign')) return 'signature';
+    // Only image-eligible fields (logo/sign/stamp/header/…) may be image or
+    // signature — word-safe, so "Designation" stays text.
+    const imageSubtype = inferImageSubtype(key);
+    if (imageSubtype) return imageSubtype;
     if (lower.includes('address') || lower.includes('note') || lower.includes('terms')) return 'textarea';
     if (lower.includes('gender') || lower.includes('type') || lower.includes('status')) return 'select';
     return 'text';
@@ -179,7 +191,7 @@ export default function EditTemplatePage() {
           description: description.trim() || undefined,
           htmlTemplate: htmlContent || undefined,
           content: { html: htmlContent },
-          variables: variables.map(({ id, ...v }) => v),
+          variables: variables.map(({ id, ...v }) => { void id; return v; }),
           category,
           visibility,
         }),
@@ -229,6 +241,12 @@ export default function EditTemplatePage() {
           </span>
         </div>
         <div className="flex items-center space-x-2">
+          <Link href={`/payslip-designer?template=${params.id}`}>
+            <Button variant="outline" size="sm">
+              <LayoutDashboard className="w-4 h-4 mr-1.5" />
+              Visual Designer
+            </Button>
+          </Link>
           <Button
             variant="outline"
             size="sm"
@@ -302,7 +320,7 @@ export default function EditTemplatePage() {
                   <label className="block text-xs font-medium text-gray-700 mb-1">Visibility</label>
                   <select
                     value={visibility}
-                    onChange={(e) => setVisibility(e.target.value as any)}
+                    onChange={(e) => setVisibility(e.target.value as 'PUBLIC' | 'PRIVATE' | 'ORGANIZATION' | 'PREMIUM' | 'AI')}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="PRIVATE">Private</option>
@@ -364,10 +382,18 @@ export default function EditTemplatePage() {
                           value={variable.type}
                           onChange={(e) => updateVariable(variable.id, { type: e.target.value as VariableDef['type'] })}
                           className="flex-1 rounded border border-gray-200 px-2 py-1 text-xs"
+                          title={isImageFieldKey(variable.key) ? undefined : 'Image/signature uploads are only allowed for logo, sign, stamp, seal and header fields'}
                         >
-                          {['text', 'number', 'date', 'email', 'textarea', 'select', 'image', 'signature'].map((t) => (
-                            <option key={t} value={t}>{t}</option>
-                          ))}
+                          {['text', 'number', 'date', 'email', 'textarea', 'select', 'image', 'signature'].map((t) => {
+                            const isImageType = t === 'image' || t === 'signature';
+                            // Only image-eligible keys may pick image/signature type
+                            const allowed = !isImageType || isImageFieldKey(variable.key);
+                            return (
+                              <option key={t} value={t} disabled={!allowed && variable.type !== t}>
+                                {t}
+                              </option>
+                            );
+                          })}
                         </select>
                         <label className="flex items-center gap-1 text-xs text-gray-500">
                           <input

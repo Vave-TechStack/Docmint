@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/text-area';
@@ -33,17 +33,20 @@ export default function AdminBlogPage() {
   const [form, setForm] = useState({ title: '', content: '', excerpt: '', category: '', tags: '' });
 
   const fetchPosts = useCallback(async () => {
-    setIsLoading(true);
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.set('status', statusFilter);
       const res = await fetch(`/api/admin/blog?${params}`);
       const data = await res.json();
       if (data.success) setPosts(data.data || []);
-    } catch (err) { console.error(err); }
-    finally { setIsLoading(false); }
+    } catch (err) {
+      console.error('Blog fetch error:', err);
+      toast.error('Failed to load blog posts');
+    } finally { setIsLoading(false); }
   }, [statusFilter]);
 
+  // Intentional: fetch on mount/filter change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchPosts(); }, [fetchPosts]);
 
   const openNewPost = () => {

@@ -19,14 +19,15 @@ import {
   Menu,
   X,
   DollarSign,
+  LayoutTemplate,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
-import { Button } from '@/components/ui/button';
 
 const sidebarLinks = [
   { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
   { label: 'Revenue', href: '/admin/revenue', icon: DollarSign },
   { label: 'Users', href: '/admin/users', icon: Users },
+  { label: 'Templates', href: '/admin/templates', icon: LayoutTemplate },
   { label: 'Subscriptions', href: '/admin/subscriptions', icon: Crown },
   { label: 'Support Tickets', href: '/admin/tickets', icon: Ticket },
   { label: 'Blog / CMS', href: '/admin/blog', icon: FileText },
@@ -46,8 +47,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (status === 'unauthenticated') {
       router.push('/login');
     } else if (status === 'authenticated') {
-      const role = (session?.user as any)?.role;
-      if (!['SUPER_ADMIN', 'ADMIN'].includes(role)) {
+      const role = session?.user?.role;
+      if (!role || !['SUPER_ADMIN', 'ADMIN'].includes(role)) {
         router.push('/dashboard');
       }
     }

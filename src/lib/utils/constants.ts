@@ -4,7 +4,8 @@ export const APP_DESCRIPTION = 'AI-Powered Business Document Generator';
 // ─── Subscription ───
 export const SUBSCRIPTION_DURATION_DAYS = 30;
 export const GRACE_PERIOD_DAYS = 7;
-export const PREMIUM_PRICE = 299; // INR
+export const PREMIUM_PRICE = 299; // INR per month
+export const ANNUAL_PREMIUM_PRICE = 2870; // INR per year (20% off ₹3,588)
 export const INSTANT_DOWNLOAD_PRICE = 1; // INR
 
 // ─── Data Retention ───
@@ -16,8 +17,13 @@ export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
 
 // ─── File Upload ───
-export const MAX_FILE_SIZE_MB = 10;
-export const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'];
+// Shared image-upload policy for the document editor, instant downloads and
+// template image fields. Every upload surface reads these constants so the
+// whitelist and size limit can never drift apart.
+export const IMAGE_UPLOAD_MAX_MB = 5;
+export const IMAGE_UPLOAD_MAX_BYTES = IMAGE_UPLOAD_MAX_MB * 1024 * 1024;
+export const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif'];
+export const ALLOWED_IMAGE_TYPES_ACCEPT = ALLOWED_IMAGE_TYPES.join(',');
 export const ALLOWED_DOCUMENT_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -42,10 +48,14 @@ export const DOCUMENT_CATEGORIES = [
 ];
 
 // ─── Placeholders ───
+// Single source of truth for the placeholder panel. Order matters: the
+// editor derives its three groups (Company → Employee → Document) by
+// filtering this list, so each group's items render in list order.
 export const SYSTEM_PLACEHOLDERS = [
+  // ── Company Fields ──
+  'CompanyName',
   'CompanyLogo',
   'CompanySeal',
-  'CompanyName',
   'CompanyAddress',
   'CompanyPhone',
   'CompanyEmail',
@@ -54,6 +64,7 @@ export const SYSTEM_PLACEHOLDERS = [
   'PAN',
   'CIN',
   'MSME',
+  // ── Employee Fields ──
   'EmployeePhoto',
   'EmployeeName',
   'EmployeeID',
@@ -62,17 +73,18 @@ export const SYSTEM_PLACEHOLDERS = [
   'JoiningDate',
   'Salary',
   'Manager',
-  'CurrentDate',
-  'CurrentYear',
+  // ── Document Fields ──
   'InvoiceNumber',
   'QuotationNumber',
   'DocumentNumber',
-  'QRCode',
-  'Barcode',
+  'CurrentDate',
+  'CurrentYear',
   'AuthorizedSignature',
   'HRSignature',
   'DirectorSignature',
   'FinanceSignature',
+  'QRCode',
+  'Barcode',
   'Watermark',
 ];
 

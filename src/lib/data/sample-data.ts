@@ -127,7 +127,7 @@ function getSampleValue(key: string): string {
   if (lower === 'clientcompany') return 'TechSolutions India Ltd.';
 
   // ─── Signatures ───
-  if (lower.includes('signature') || lower.includes('sign')) return PLACEHOLDER_IMAGES.signature;
+  if (lower.includes('signature')) return PLACEHOLDER_IMAGES.signature;
   if (lower === 'authorizedsignature' || lower === 'authorizedsign') return PLACEHOLDER_IMAGES.signature;
 
   // ─── Images ───
@@ -152,15 +152,15 @@ function getSampleValue(key: string): string {
   if (lower === 'clinicaddress') return '789, Health Avenue, Jubilee Hills, Hyderabad - 500033';
   if (lower === 'cliniclogo') return PLACEHOLDER_IMAGES.logo;
   if (lower === 'patientname') return 'Suresh Kumar';
-  if (lower ===('patientage')) return '35';
+  if (lower === 'patientage') return '35';
   if (lower === 'patientgender') return 'Male';
-  if (lower ===('diagnosis')) return 'Acute Bronchitis with mild fever';
-  if (lower ===('advice')) return 'Take prescribed medication, complete bed rest for 3 days, stay hydrated';
-  if (lower ===('sickdays')) return '3';
-  if (lower ===('fromdate')) return '01 March 2024';
-  if (lower ===('todate')) return '03 March 2024';
-  if (lower ===('medicinedetails')) return 'Tab. Amoxicillin 500mg - 3x/day, Tab. Paracetamol 650mg - SOS, Syrup Cough Relief - 2x/day';
-  if (lower ===('registrationno')) return 'KMC-56789';
+  if (lower === 'diagnosis') return 'Acute Bronchitis with mild fever';
+  if (lower === 'advice') return 'Take prescribed medication, complete bed rest for 3 days, stay hydrated';
+  if (lower === 'sickdays') return '3';
+  if (lower === 'fromdate') return '01 March 2024';
+  if (lower === 'todate') return '03 March 2024';
+  if (lower === 'medicinedetails') return 'Tab. Amoxicillin 500mg - 3x/day, Tab. Paracetamol 650mg - SOS, Syrup Cough Relief - 2x/day';
+  if (lower === 'registrationno') return 'KMC-56789';
 
   // ─── Total Experience ───
   if (lower === 'totalexperience') return '2 Years 0 Months';
@@ -207,72 +207,70 @@ function getSampleValue(key: string): string {
   if (lower === 'meetinglocation') return 'Conference Room A';
   if (lower === 'chairperson') return 'Arun Kumar (CEO)';
   if (lower === 'attendees') return 'Rahul Sharma, Priya Singh, Vikram Patel, Ananya Gupta, Ravi Deshmukh';
-  if (lower ===('agenda')) return '1. Review Q4 2023 performance\n2. Q1 2024 product roadmap discussion\n3. Feature prioritization\n4. Resource allocation\n5. Timeline and milestones';
-  if (lower ===('discussionpoints')) return '• Q4 revenue exceeded targets by 15%\n• Customer acquisition cost reduced by 20%\n• Three major feature requests from enterprise clients\n• Team capacity constraints identified\n• New market expansion opportunities discussed';
-  if (lower ===('decisions')) return '• Priority: Launch customer portal by March 2024\n• Allocate 2 additional engineers to the mobile team\n• Postpone AI features to Q2 2024\n• Approve budget for cloud infrastructure upgrade';
-  if (lower ===('actionitemstable')) return '| Action Item | Owner | Deadline |\n|---|---|---|\n| Finalize Q1 roadmap | Vikram Patel | Jan 20 |\n| Hire 2 backend engineers | Priya Singh | Feb 15 |\n| Begin customer portal development | Ravi Deshmukh | Jan 25 |\n| Cloud migration proposal | Rahul Sharma | Feb 1 |';
-  if (lower ===('nextmeeting')) return '12 February 2024, 10:00 AM';
+  if (lower === 'agenda') return '1. Review Q4 2023 performance\n2. Q1 2024 product roadmap discussion\n3. Feature prioritization\n4. Resource allocation\n5. Timeline and milestones';
+  if (lower === 'discussionpoints') return '• Q4 revenue exceeded targets by 15%\n• Customer acquisition cost reduced by 20%\n• Three major feature requests from enterprise clients\n• Team capacity constraints identified\n• New market expansion opportunities discussed';
+  if (lower === 'decisions') return '• Priority: Launch customer portal by March 2024\n• Allocate 2 additional engineers to the mobile team\n• Postpone AI features to Q2 2024\n• Approve budget for cloud infrastructure upgrade';
+  if (lower === 'actionitemstable') return '| Action Item | Owner | Deadline |\n|---|---|---|\n| Finalize Q1 roadmap | Vikram Patel | Jan 20 |\n| Hire 2 backend engineers | Priya Singh | Feb 15 |\n| Begin customer portal development | Ravi Deshmukh | Jan 25 |\n| Cloud migration proposal | Rahul Sharma | Feb 1 |';
+  if (lower === 'nextmeeting') return '12 February 2024, 10:00 AM';
 
   // ─── Marketing ───
   if (lower === 'postheadline') return 'Introducing Our Next-Generation Platform 🚀';
   if (lower === 'postbody') return 'We are thrilled to announce the launch of our completely redesigned platform! After months of hard work, listening to customer feedback, and pushing the boundaries of what\'s possible, we\'re proud to present a faster, smarter, and more intuitive experience.\n\nKey highlights:\n✨ 2x faster performance\n🎨 Beautiful new interface\n🔒 Enhanced security features\n📊 Advanced analytics dashboard\n\nTry it today and experience the difference!';
   if (lower === 'calltoaction') return 'Get Started Free Today →';
   if (lower === 'hashtags') return '#ProductLaunch #Innovation #Technology #SaaS #DigitalTransformation';
-  if (lower ===('authorname') || lower === 'authorname') return 'Rahul Sharma';
-  if (lower ===('postdate') || lower === 'postdate') return '15 January 2024';
+  if (lower === 'authorname') return 'Rahul Sharma';
+  if (lower === 'postdate') return '15 January 2024';
   if (lower === 'linkurl') return 'https://acmecorp.com/launch';
 
   // ─── Email Campaign ───
   if (lower === 'emailsubject') return 'Exclusive Offer: 20% Off on Premium Plans';
-  if (lower ===('greeting')) return 'Dear Customer,';
-  if (lower ===('emailbody')) return 'We hope this message finds you well! We\'re reaching out to share an exclusive opportunity to upgrade your experience with our premium features.\n\nFor a limited time, we\'re offering a special 20% discount on all annual premium plans. This is the perfect time to unlock the full potential of our platform and take your productivity to the next level.';
-  if (lower ===('promoheadline')) return 'Limited Time Offer!';
-  if (lower ===('promodescription')) return 'Get 20% off on all annual premium plans. Upgrade now and save big!';
-  if (lower ===('promocode')) return 'PREMIUM20';
-  if (lower ===('discountpercentage')) return '20';
-  if (lower ===('cta_text') || lower === 'cta_text') return 'Claim Your Discount';
-  if (lower ===('cta_link') || lower === 'cta_link') return 'https://acmecorp.com/upgrade';
-  if (lower ===('footertext')) return 'You are receiving this email because you signed up for Acme Corp. If you wish to unsubscribe, click the link below.';
-  if (lower ===('unsubscribelink')) return 'https://acmecorp.com/unsubscribe';
+  if (lower === 'greeting') return 'Dear Customer,';
+  if (lower === 'emailbody') return 'We hope this message finds you well! We\'re reaching out to share an exclusive opportunity to upgrade your experience with our premium features.\n\nFor a limited time, we\'re offering a special 20% discount on all annual premium plans. This is the perfect time to unlock the full potential of our platform and take your productivity to the next level.';
+  if (lower === 'promoheadline') return 'Limited Time Offer!';
+  if (lower === 'promodescription') return 'Get 20% off on all annual premium plans. Upgrade now and save big!';
+  if (lower === 'promocode') return 'PREMIUM20';
+  if (lower === 'discountpercentage') return '20';
+  if (lower === 'ctatext' || lower === 'cta_text') return 'Claim Your Discount';
+  if (lower === 'cta_link') return 'https://acmecorp.com/upgrade';
+  if (lower === 'footertext') return 'You are receiving this email because you signed up for Acme Corp. If you wish to unsubscribe, click the link below.';
+  if (lower === 'unsubscribelink') return 'https://acmecorp.com/unsubscribe';
 
   // ─── Brochure ───
   if (lower === 'brochuretitle') return 'Empower Your Business with Next-Gen Solutions';
   if (lower === 'brochuresubtitle') return 'Transform your workflow with our cutting-edge platform';
-  if (lower === ('feature1_title')) return 'Smart Automation';
-  if (lower === ('feature1_desc')) return 'Automate repetitive tasks and focus on what matters most. Our AI-powered engine handles the heavy lifting.';
-  if (lower === ('feature2_title')) return 'Real-time Analytics';
-  if (lower === ('feature2_desc')) return 'Get instant insights with beautiful dashboards. Make data-driven decisions in real-time.';
-  if (lower === ('feature3_title')) return 'Seamless Integration';
-  if (lower === ('feature3_desc')) return 'Connect with your favorite tools effortlessly. 100+ integrations out of the box.';
-  if (lower === ('feature4_title')) return 'Enterprise Security';
-  if (lower === ('feature4_desc')) return 'Bank-grade encryption, SOC 2 compliance, and granular access controls.';
-  if (lower === ('pricingheadline')) return 'Simple, Transparent Pricing';
-  if (lower === ('priceamount')) return '₹2,990';
-  if (lower === ('priceperiod')) return '/year';
-  if (lower === ('pricedetails')) return 'Includes all features, priority support, and regular updates. No hidden fees.';
-  if (lower === ('ctatext')) return 'Start Your Free Trial';
-
+  if (lower === 'feature1_title') return 'Smart Automation';
+  if (lower === 'feature1_desc') return 'Automate repetitive tasks and focus on what matters most. Our AI-powered engine handles the heavy lifting.';
+  if (lower === 'feature2_title') return 'Real-time Analytics';
+  if (lower === 'feature2_desc') return 'Get instant insights with beautiful dashboards. Make data-driven decisions in real-time.';
+  if (lower === 'feature3_title') return 'Seamless Integration';
+  if (lower === 'feature3_desc') return 'Connect with your favorite tools effortlessly. 100+ integrations out of the box.';
+  if (lower === 'feature4_title') return 'Enterprise Security';
+  if (lower === 'feature4_desc') return 'Bank-grade encryption, SOC 2 compliance, and granular access controls.';
+  if (lower === 'pricingheadline') return 'Simple, Transparent Pricing';
+  if (lower === 'priceamount') return '₹2,990';
+  if (lower === 'priceperiod') return '/year';
+  if (lower === 'pricedetails') return 'Includes all features, priority support, and regular updates. No hidden fees.';
   // ─── Proposal ───
   if (lower === 'proposaltitle') return 'Digital Transformation Initiative - Q1 2024';
-  if (lower ===('executivesummary')) return 'This proposal outlines a comprehensive digital transformation strategy for TechSolutions India Ltd. The project aims to modernize existing infrastructure, implement cloud-native solutions, and enhance operational efficiency by 40% over the next 12 months.';
-  if (lower === ('scopeofwork') || lower === 'scopeofwork') return '1. Infrastructure assessment and migration plan\n2. Cloud architecture design and implementation\n3. Legacy system modernization\n4. CI/CD pipeline setup\n5. Team training and documentation\n6. Post-migration support (3 months)';
-  if (lower ===('projecttimeline') || lower === 'projecttimeline') return 'Phase 1: Assessment & Planning (4 weeks)\nPhase 2: Architecture Design (3 weeks)\nPhase 3: Implementation (12 weeks)\nPhase 4: Testing & Deployment (4 weeks)\nPhase 5: Training & Handover (2 weeks)';
-  if (lower ===('projectcost') || lower === 'projectcost') return '₹ 25,00,000 (Rupees Twenty-Five Lakhs Only)';
-  if (lower ===('paymentterms') || lower === 'paymentterms') return '30% advance, 40% on milestone completion, 30% on project delivery. Net 30 days from invoice.';
-  if (lower ===('deliveryterms')) return 'Delivery within 25 weeks from project kickoff. Milestone-based delivery with weekly progress reviews.';
-  if (lower ===('teammembers')) return 'Project Manager: Vikram Patel\nTech Lead: Rahul Sharma\nCloud Architect: Ananya Gupta\nDeveloper: Ravi Deshmukh';
+  if (lower === 'executivesummary') return 'This proposal outlines a comprehensive digital transformation strategy for TechSolutions India Ltd. The project aims to modernize existing infrastructure, implement cloud-native solutions, and enhance operational efficiency by 40% over the next 12 months.';
+  if (lower === 'scopeofwork') return '1. Infrastructure assessment and migration plan\n2. Cloud architecture design and implementation\n3. Legacy system modernization\n4. CI/CD pipeline setup\n5. Team training and documentation\n6. Post-migration support (3 months)';
+  if (lower === 'projecttimeline') return 'Phase 1: Assessment & Planning (4 weeks)\nPhase 2: Architecture Design (3 weeks)\nPhase 3: Implementation (12 weeks)\nPhase 4: Testing & Deployment (4 weeks)\nPhase 5: Training & Handover (2 weeks)';
+  if (lower === 'projectcost') return '₹ 25,00,000 (Rupees Twenty-Five Lakhs Only)';
+  if (lower === 'paymentterms') return '30% advance, 40% on milestone completion, 30% on project delivery. Net 30 days from invoice.';
+  if (lower === 'deliveryterms') return 'Delivery within 25 weeks from project kickoff. Milestone-based delivery with weekly progress reviews.';
+  if (lower === 'teammembers') return 'Project Manager: Vikram Patel\nTech Lead: Rahul Sharma\nCloud Architect: Ananya Gupta\nDeveloper: Ravi Deshmukh';
 
   // ─── Real Estate ───
   if (lower === 'propertyaddress') return 'Plot 42, Sector 15, Electronic City, Bangalore - 560100';
   if (lower === 'propertytype') return '2 BHK Premium Apartment';
-  if (lower ===('propertyname')) return 'Green Valley Residency';
+  if (lower === 'propertyname') return 'Green Valley Residency';
   if (lower === 'propertysize') return '1,250 sq.ft. (Super Built-up)';
-  if (lower ===('configuration')) return '2 Bedrooms, 2 Bathrooms, 1 Living Room, 1 Balcony, 1 Car Parking';
-  if (lower ===('ownername') || lower ===('buildername') || lower ===('owneraddress')) return 'Green Valley Developers Pvt. Ltd., 789, Construction House, Bangalore - 560078';
-  if (lower ===('tenantname')) return 'Rahul Sharma';
-  if (lower ===('tenantaddress')) return '123, Current Residence, Indiranagar, Bangalore - 560038';
-  if (lower ===('tenantphone')) return '+91 98765 43210';
-  if (lower ===('tenantemail')) return 'rahul.sharma@email.com';
+  if (lower === 'configuration') return '2 Bedrooms, 2 Bathrooms, 1 Living Room, 1 Balcony, 1 Car Parking';
+  if (lower === 'ownername' || lower === 'buildername' || lower === 'owneraddress') return 'Green Valley Developers Pvt. Ltd., 789, Construction House, Bangalore - 560078';
+  if (lower === 'tenantname') return 'Rahul Sharma';
+  if (lower === 'tenantaddress') return '123, Current Residence, Indiranagar, Bangalore - 560038';
+  if (lower === 'tenantphone') return '+91 98765 43210';
+  if (lower === 'tenantemail') return 'rahul.sharma@email.com';
   if (lower.includes('rentamount')) return '35,000';
   if (lower.includes('securitydeposit')) return '1,05,000';
   if (lower.includes('maintenancecharges')) return '3,500';
@@ -289,16 +287,16 @@ function getSampleValue(key: string): string {
   if (lower.includes('supervisordesignation')) return 'Senior Project Manager';
 
   // ─── Manufacturing ───
-  if (lower ===('productname')) return 'Industrial Grade Bearing Assembly';
-  if (lower ===('productcode')) return 'BRG-2024-001';
-  if (lower ===('quantity')) return '500';
-  if (lower ===('unit')) return 'Pieces';
+  if (lower === 'productname') return 'Industrial Grade Bearing Assembly';
+  if (lower === 'productcode') return 'BRG-2024-001';
+  if (lower === 'quantity') return '500';
+  if (lower === 'unit') return 'Pieces';
   if (lower.includes('priority')) return 'High';
   if (lower.includes('customername')) return 'AutoParts Manufacturing Ltd.';
-  if (lower.includes('customername')) return 'MPL-2024-0042';
+  if (lower.includes('customerpo')) return 'MPL-2024-0042';
   if (lower.includes('batchnumber') || lower.includes('batchno')) return 'BATCH-2024-02-156';
-  if (lower.includes('lotsize') || lower.includes('lotsize')) return '1,000';
-  if (lower.includes('samplesize') || lower.includes('samplesize')) return '50';
+  if (lower.includes('lotsize')) return '1,000';
+  if (lower.includes('samplesize')) return '50';
   if (lower.includes('inspector')) return 'Quality Inspector - Ramesh Gupta';
   if (lower.includes('inspectionmethod')) return 'Visual Inspection, Dimensional Measurement, Load Testing';
   if (lower.includes('parameters')) return '| Parameter | Specification | Result | Status |\n|---|---|---|---|\n| Diameter | 45.00 ± 0.05 mm | 44.98 mm | ✅ Pass |\n| Hardness | HRC 58-62 | HRC 60 | ✅ Pass |\n| Surface Finish | Ra ≤ 0.8 μm | Ra 0.6 μm | ✅ Pass |\n| Load Capacity | ≥ 5,000 N | 5,200 N | ✅ Pass |';
@@ -310,17 +308,17 @@ function getSampleValue(key: string): string {
   if (lower.includes('recipientname')) return 'Rahul Sharma';
   if (lower.includes('recipientdesignation')) return 'Senior Software Engineer';
   if (lower.includes('awarddate')) return '15 January 2024';
-  if (lower.includes('presentername') || lower.includes('presentername')) return 'Arun Kumar (CEO)';
+  if (lower.includes('presentername')) return 'Arun Kumar (CEO)';
   if (lower.includes('presenterdesignation')) return 'Chief Executive Officer';
   if (lower.includes('achievementdescription')) return 'For exceptional contributions to the successful launch of the customer portal, demonstrating outstanding technical leadership, innovative problem-solving, and dedication to delivering high-quality results under tight deadlines.';
   if (lower.includes('trainingprogram')) return 'Advanced Cloud Architecture & DevOps';
   if (lower.includes('trainingprovider')) return 'AWS Training & Certification';
   if (lower.includes('trainingduration')) return '5 Days (40 Hours)';
   if (lower.includes('topicscovered')) return '• AWS Cloud Architecture Best Practices\n• Microservices Design Patterns\n• CI/CD Pipeline with AWS DevOps\n• Kubernetes Container Orchestration\n• Infrastructure as Code with Terraform';
-  if (lower.includes('assessmentscore') || lower.includes('assessmentscore')) return '92%';
+  if (lower.includes('assessmentscore')) return '92%';
   if (lower.includes('grade')) return 'A+';
-  if (lower.includes('trainername') || lower.includes('trainername')) return 'John Mathews';
-  if (lower.includes('trainerdesignation') || lower.includes('trainerdesignation')) return 'Senior AWS Trainer';
+  if (lower.includes('trainername')) return 'John Mathews';
+  if (lower.includes('trainerdesignation')) return 'Senior AWS Trainer';
 
   // ─── Letter body ───
   if (lower.includes('letterbody')) return 'This is to certify that the above-mentioned organization is a registered business entity operating in compliance with all applicable laws and regulations.\n\nThis letterhead is valid for all official correspondence and communication purposes.\n\nFor any inquiries, please contact our registered office during business hours.';

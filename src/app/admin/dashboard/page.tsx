@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import toast from 'react-hot-toast';
 import {
   Users,
   DollarSign,
@@ -27,7 +28,10 @@ export default function AdminDashboardPage() {
       .then((data) => {
         if (data.success) setStats(data.data);
       })
-      .catch(console.error)
+      .catch((err) => {
+        console.error('Dashboard data fetch error:', err);
+        toast.error('Failed to load dashboard data');
+      })
       .finally(() => setIsLoading(false));
   }, []);
 

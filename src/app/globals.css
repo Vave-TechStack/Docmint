@@ -1,5 +1,41 @@
 @import "tailwindcss";
 
+/* ─── Document editor: automatic page-break separator ───
+   Auto-inserted by the editor when content fills an A4 page (and via manual
+   toolbar breaks). Shows a visible "New Page" divider while editing and
+   forces a real page break in print / PDF output. */
+.doc-page-break {
+  position: relative;
+  height: 2px;
+  margin: 28px 0;
+  background: repeating-linear-gradient(90deg, #cbd5e1 0 8px, transparent 8px 16px);
+  border: none;
+  break-after: page;
+  page-break-after: always;
+}
+.doc-page-break::before {
+  content: 'New Page';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: #f3f4f6;
+  color: #9ca3af;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+@media print {
+  .doc-page-break::before {
+    display: none;
+  }
+}
+
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 

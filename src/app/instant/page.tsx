@@ -2,14 +2,26 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Search, Download, Zap, Sparkles, ArrowRight, FileText, Loader2 } from 'lucide-react';
+import { Download, Zap, Sparkles, FileText, Loader2 } from 'lucide-react';
+import { getTemplateThumbnail } from '@/lib/utils/image-placeholders';
+
+interface PublicTemplate {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  documentCategory?: string;
+  category?: string;
+  thumbnail?: string;
+}
 
 export default function InstantDownloadPage() {
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<PublicTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
@@ -18,11 +30,11 @@ export default function InstantDownloadPage() {
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
-        const res = await fetch('/api/templates?type=PUBLIC&pageSize=50');
+        const res = await fetch('/api/templates?type=PUBLIC&isPremium=false&pageSize=50');
         const data = await res.json();
         if (data.success) {
           setTemplates(data.data || []);
-          const cats = [...new Set(data.data.map((t: any) => t.documentCategory || t.category))] as string[];
+          const cats = [...new Set(data.data.map((t: PublicTemplate) => t.documentCategory || t.category))] as string[];
           setCategories(cats);
         }
       } catch (err) {
@@ -119,8 +131,14 @@ export default function InstantDownloadPage() {
               {filteredTemplates.map((template) => (
                 <Link key={template.id} href={`/instant/${template.slug}`}>
                   <Card hover className="overflow-hidden">
-                    <div className="aspect-[3/4] bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-                      <FileText className="w-16 h-16 text-gray-400" />
+                    <div className="aspect-[3/4] relative">
+                      <Image
+                        src={template.thumbnail || getTemplateThumbnail(template.name, template.documentCategory || 'General')}
+                        alt={template.name}
+                        fill
+                        unoptimized
+                        className="object-cover"
+                      />
                     </div>
                     <CardContent className="p-4">
                       <h3 className="font-semibold text-sm mb-1">{template.name}</h3>

@@ -8,6 +8,9 @@
  * Or after configuring package.json: npx prisma db seed
  */
 
+// Throwaway scratch seed — several helper declarations below are intentionally unused.
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as fs from 'fs';
@@ -511,6 +514,181 @@ const TEMPLATES = [
 </body>
 </html>`
   },
+  {
+    name: 'Employee Payslip',
+    description: 'Clean monthly salary slip for employees with a modern earnings & deductions breakdown, bank details, and net pay summary.',
+    documentCategory: 'HR Documents',
+    visibility: 'PUBLIC' as const,
+    isPremium: false,
+    isDefault: true,
+    placeholders: ['CompanyName', 'CompanyLogo', 'CompanyAddress', 'EmployeeName', 'EmployeeID', 'Designation', 'Department', 'PAN', 'BankName', 'BankAccount', 'UAN', 'PayPeriod', 'PayDate', 'Basic', 'DA', 'HRA', 'Conveyance', 'Medical', 'SpecialAllowance', 'GrossEarnings', 'PF', 'ESI', 'ProfessionalTax', 'IncomeTax', 'TotalDeductions', 'NetPay', 'NetPayWords'],
+    htmlTemplate: `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<style>
+  /* A4 + print-friendly payslip. Table-based layout on purpose: jsPDF renders
+     this HTML through html2canvas 1.4.1, which handles tables reliably but
+     mis-renders flex/grid. All colors set to print with exact color adjust. */
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 12px;
+    color: #1f2937;
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .payslip {
+    width: 100%;
+    max-width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    background: #fff;
+    padding: 12mm 11mm 8mm;
+  }
+  table { border-collapse: collapse; width: 100%; }
+
+  /* Header */
+  .hdr td { vertical-align: middle; padding: 0; }
+  .hdr-company { font-size: 19px; font-weight: 700; color: #1d4ed8; letter-spacing: 0.3px; }
+  .hdr-addr { font-size: 10.5px; color: #6b7280; margin-top: 2px; line-height: 1.45; }
+  .hdr-logo { text-align: right; }
+  .hdr-logo img { max-height: 52px; max-width: 130px; }
+  .hdr-title {
+    background: #1d4ed8; color: #fff; text-align: center;
+    font-size: 12px; font-weight: 700; letter-spacing: 3px;
+    text-transform: uppercase; padding: 7px 0; margin-top: 10px;
+  }
+
+  /* Pay period strip */
+  .meta { margin-top: 10px; border: 1px solid #e5e7eb; background: #f8fafc; }
+  .meta td { padding: 7px 10px; font-size: 11px; color: #374151; width: 50%; }
+  .meta td + td { border-left: 1px solid #e5e7eb; }
+  .meta .lbl { display: block; font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.6px; }
+
+  /* Employee details */
+  .emp { margin-top: 10px; }
+  .emp td { padding: 6px 8px; font-size: 11.5px; border: 1px solid #e5e7eb; width: 50%; vertical-align: top; }
+  .emp .lbl { display: block; font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 1px; }
+
+  /* Earnings / Deductions columns */
+  .cols { margin-top: 12px; }
+  .cols > tbody > tr > td { width: 50%; vertical-align: top; padding: 0; }
+  .cols > tbody > tr > td:first-child { padding-right: 5px; }
+  .cols > tbody > tr > td:last-child { padding-left: 5px; }
+  .section { border: 1px solid #e5e7eb; }
+  .section-head { background: #1d4ed8; color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 10px; }
+  .items td { padding: 5px 10px; font-size: 11.5px; border-bottom: 1px solid #f3f4f6; }
+  .items td:last-child { text-align: right; font-weight: 600; color: #111827; }
+  .items tr:last-child td { border-bottom: none; }
+  .items tr.total td { background: #eff6ff; font-weight: 700; color: #1d4ed8; border-top: 2px solid #1d4ed8; }
+
+  /* Net pay */
+  .net { margin-top: 12px; background: #059669; color: #fff; }
+  .net td { padding: 9px 14px; vertical-align: middle; }
+  .net-label { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+  .net-label small { display: block; font-size: 9.5px; font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.9; margin-top: 2px; }
+  .net-amount { text-align: right; font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
+
+  /* Bank + footer */
+  .bank { margin-top: 10px; font-size: 10.5px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 7px; }
+  .footer { margin-top: 8px; text-align: center; font-size: 9px; color: #9ca3af; border-top: 1px dashed #e5e7eb; padding-top: 6px; }
+
+  @media print {
+    html, body { background: #fff !important; }
+    .payslip { max-width: none; min-height: 0; padding: 0; }
+  }
+</style></head>
+<body>
+<div class="payslip">
+  <!-- Header -->
+  <table class="hdr">
+    <tr>
+      <td>
+        <div class="hdr-company">{{CompanyName}}</div>
+        <div class="hdr-addr">{{CompanyAddress}}</div>
+      </td>
+      <td class="hdr-logo">
+        <img src="{{CompanyLogo}}" alt="Logo" style="display:{{CompanyLogo:none}};" onerror="this.style.display='none'">
+      </td>
+    </tr>
+  </table>
+  <div class="hdr-title">Salary Slip</div>
+
+  <!-- Pay period -->
+  <table class="meta">
+    <tr>
+      <td><span class="lbl">Pay Period</span>{{PayPeriod}}</td>
+      <td><span class="lbl">Pay Date</span>{{PayDate}}</td>
+    </tr>
+  </table>
+
+  <!-- Employee details -->
+  <table class="emp">
+    <tr>
+      <td><span class="lbl">Employee Name</span>{{EmployeeName}}</td>
+      <td><span class="lbl">Employee ID</span>{{EmployeeID}}</td>
+    </tr>
+    <tr>
+      <td><span class="lbl">Designation</span>{{Designation}}</td>
+      <td><span class="lbl">Department</span>{{Department}}</td>
+    </tr>
+    <tr>
+      <td><span class="lbl">PAN</span>{{PAN}}</td>
+      <td><span class="lbl">UAN</span>{{UAN}}</td>
+    </tr>
+  </table>
+
+  <!-- Earnings / Deductions -->
+  <table class="cols">
+    <tr>
+      <td>
+        <div class="section">
+          <div class="section-head">Earnings</div>
+          <table class="items">
+            <tr><td>Basic Salary</td><td>₹ {{Basic}}</td></tr>
+            <tr><td>Dearness Allowance</td><td>₹ {{DA}}</td></tr>
+            <tr><td>House Rent Allowance</td><td>₹ {{HRA}}</td></tr>
+            <tr><td>Conveyance Allowance</td><td>₹ {{Conveyance}}</td></tr>
+            <tr><td>Medical Allowance</td><td>₹ {{Medical}}</td></tr>
+            <tr><td>Special Allowance</td><td>₹ {{SpecialAllowance}}</td></tr>
+            <tr class="total"><td>Gross Earnings</td><td>₹ {{GrossEarnings}}</td></tr>
+          </table>
+        </div>
+      </td>
+      <td>
+        <div class="section">
+          <div class="section-head">Deductions</div>
+          <table class="items">
+            <tr><td>Provident Fund</td><td>₹ {{PF}}</td></tr>
+            <tr><td>ESI</td><td>₹ {{ESI}}</td></tr>
+            <tr><td>Professional Tax</td><td>₹ {{ProfessionalTax}}</td></tr>
+            <tr><td>Income Tax</td><td>₹ {{IncomeTax}}</td></tr>
+            <tr class="total"><td>Total Deductions</td><td>₹ {{TotalDeductions}}</td></tr>
+          </table>
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Net pay -->
+  <table class="net">
+    <tr>
+      <td>
+        <div class="net-label">Net Pay<small>Rupees {{NetPayWords}} only</small></div>
+      </td>
+      <td class="net-amount">₹ {{NetPay}}</td>
+    </tr>
+  </table>
+
+  <div class="bank"><strong>Bank:</strong> {{BankName}} &nbsp;|&nbsp; <strong>A/c No:</strong> {{BankAccount}}</div>
+  <div class="footer">This is a computer-generated payslip | {{CompanyName}} | For any discrepancies, contact HR</div>
+</div>
+</body>
+</html>`
+  },
 
   // ═══════════════════════════════════════════════
   // PAYROLL
@@ -520,7 +698,7 @@ const TEMPLATES = [
     description: 'Professional monthly salary slip with detailed earnings and deductions breakdown, ready for printing.',
     documentCategory: 'Payroll',
     visibility: 'PUBLIC' as const,
-    isPremium: false,
+    isPremium: true,
     isDefault: true,
     placeholders: ['CompanyName', 'CompanyLogo', 'CompanyAddress', 'EmployeeName', 'EmployeeID', 'Designation', 'Department', 'PAN', 'BankName', 'BankAccount', 'UAN', 'PayPeriod', 'PayDate', 'Basic', 'DA', 'HRA', 'Conveyance', 'Medical', 'SpecialAllowance', 'GrossEarnings', 'PF', 'ESI', 'ProfessionalTax', 'IncomeTax', 'TotalDeductions', 'NetPay', 'NetPayWords'],
     htmlTemplate: `<!DOCTYPE html>
@@ -674,7 +852,7 @@ const TEMPLATES = [
     description: 'Professional GST-compliant tax invoice with company details, buyer info, itemized billing, and tax breakdown.',
     documentCategory: 'Finance',
     visibility: 'PUBLIC' as const,
-    isPremium: false,
+    isPremium: true,
     isDefault: true,
     placeholders: ['CompanyName', 'CompanyLogo', 'CompanyAddress', 'CompanyEmail', 'CompanyPhone', 'CompanyWebsite', 'GST', 'PAN', 'CIN', 'InvoiceNumber', 'InvoiceDate', 'DueDate', 'BuyerName', 'BuyerAddress', 'BuyerGST', 'BuyerState', 'BuyerStateCode', 'ItemsTable', 'Subtotal', 'CGST', 'SGST', 'IGST', 'TotalTax', 'GrandTotal', 'TotalInWords', 'BankName', 'BankAccount', 'BankIfsc', 'AuthorizedSignature', 'TermsConditions'],
     htmlTemplate: `<!DOCTYPE html>
@@ -885,7 +1063,7 @@ const TEMPLATES = [
     description: 'Standard mutual non-disclosure agreement for protecting confidential business information between parties.',
     documentCategory: 'Legal',
     visibility: 'PUBLIC' as const,
-    isPremium: false,
+    isPremium: true,
     isDefault: true,
     placeholders: ['CompanyName', 'CompanyLogo', 'PartyAName', 'PartyAAddress', 'PartyBName', 'PartyBAddress', 'EffectiveDate', 'TermYears', 'Jurisdiction', 'AuthorizedSignature', 'NDA_Signature_PartyB', 'CurrentDate'],
     htmlTemplate: `<!DOCTYPE html>
@@ -968,7 +1146,7 @@ const TEMPLATES = [
     description: 'Professional business proposal with executive summary, scope of work, timeline, pricing, and next steps.',
     documentCategory: 'Business',
     visibility: 'PUBLIC' as const,
-    isPremium: false,
+    isPremium: true,
     isDefault: true,
     placeholders: ['CompanyName', 'CompanyLogo', 'CompanyAddress', 'CompanyEmail', 'CompanyPhone', 'ProposalTitle', 'ClientName', 'ClientCompany', 'ExecutiveSummary', 'ScopeOfWork', 'ProjectTimeline', 'ProjectCost', 'PaymentTerms', 'TeamMembers', 'AuthorizedSignature', 'CurrentDate'],
     htmlTemplate: `<!DOCTYPE html>
@@ -1357,7 +1535,7 @@ const TEMPLATES = [
     description: 'Professional medical certificate for doctors to certify patient consultation, diagnosis, and recommended rest period.',
     documentCategory: 'Medical',
     visibility: 'PUBLIC' as const,
-    isPremium: false,
+    isPremium: true,
     isDefault: true,
     placeholders: ['DoctorName', 'DoctorQualification', 'ClinicName', 'ClinicAddress', 'ClinicLogo', 'PatientName', 'PatientAge', 'PatientGender', 'Diagnosis', 'Advice', 'SickDays', 'FromDate', 'ToDate', 'MedicineDetails', 'DoctorSignature', 'IssuedDate', 'RegistrationNo'],
     htmlTemplate: `<!DOCTYPE html>

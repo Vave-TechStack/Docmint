@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { PaymentService } from '@/lib/payment/razorpay';
-import { SUBSCRIPTION_DURATION_DAYS, GRACE_PERIOD_DAYS } from '@/lib/utils/constants';
+import { SUBSCRIPTION_DURATION_DAYS, GRACE_PERIOD_DAYS, ANNUAL_PREMIUM_PRICE } from '@/lib/utils/constants';
 import { EmailService } from '@/lib/email/email-service';
 
 /**
@@ -28,7 +28,7 @@ export async function PATCH(request: NextRequest) {
     const subscription = await prisma.subscription.findFirst({
       where: {
         userId: session.user.id,
-        organizationId: session.user.organizationId,
+        organizationId: session.user.organizationId!,
         status: { in: ['ACTIVE', 'GRACE_PERIOD', 'CANCELLED', 'EXPIRED'] },
       },
       orderBy: { createdAt: 'desc' },
@@ -67,7 +67,7 @@ export async function PATCH(request: NextRequest) {
 
       await prisma.auditLog.create({
         data: {
-          organizationId: session.user.organizationId,
+          organizationId: session.user.organizationId!,
           userId: session.user.id,
           action: 'SUBSCRIPTION_CANCELLED',
           entity: 'Subscription',
@@ -114,10 +114,10 @@ export async function PATCH(request: NextRequest) {
       const newGraceEndDate = new Date(newEndDate);
       newGraceEndDate.setDate(newGraceEndDate.getDate() + GRACE_PERIOD_DAYS);
 
-      const result = await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx) => {
         // Update org plan
         await tx.organization.update({
-          where: { id: session.user.organizationId },
+          where: { id: session.user.organizationId! },
           data: { plan: 'PREMIUM' },
         });
 
@@ -137,7 +137,7 @@ export async function PATCH(request: NextRequest) {
         // Record RENEWAL payment for accounting
         await tx.payment.create({
           data: {
-            organizationId: session.user.organizationId,
+            organizationId: session.user.organizationId!,
             userId: session.user.id,
             subscriptionId: subscription.id,
             razorpayOrderId: razorpayOrderId || null,
@@ -163,7 +163,7 @@ export async function PATCH(request: NextRequest) {
 
       await prisma.auditLog.create({
         data: {
-          organizationId: session.user.organizationId,
+          organizationId: session.user.organizationId!,
           userId: session.user.id,
           action: 'SUBSCRIPTION_RENEWED',
           entity: 'Subscription',
@@ -197,7 +197,7 @@ export async function GET() {
     // Try active/grace first
     let subscription = await prisma.subscription.findFirst({
       where: {
-        organizationId: session.user.organizationId,
+        organizationId: session.user.organizationId!,
         userId: session.user.id,
         status: { in: ['ACTIVE', 'GRACE_PERIOD'] },
       },
@@ -208,7 +208,7 @@ export async function GET() {
     if (!subscription) {
       subscription = await prisma.subscription.findFirst({
         where: {
-          organizationId: session.user.organizationId,
+          organizationId: session.user.organizationId!,
           userId: session.user.id,
         },
         orderBy: { createdAt: 'desc' },
@@ -233,7 +233,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { razorpayPaymentId, razorpayOrderId, razorpaySignature } = body;
+    const { razorpayPaymentId, razorpayOrderId, razorpaySignature, planType } = body;
+
+    // Determine if annual billing
+    const isAnnual = planType === 'annual';
+    const subscriptionAmount = isAnnual ? PaymentService.ANNUAL_SUBSCRIPTION_AMOUNT : PaymentService.SUBSCRIPTION_AMOUNT;
+    const durationDays = isAnnual ? 365 : SUBSCRIPTION_DURATION_DAYS;
+    const displayPrice = isAnnual ? ANNUAL_PREMIUM_PRICE : 299;
+    const descriptionText = isAnnual ? 'Premium Plan - 1 Year' : 'Premium Plan - 30 Days';
 
     // Check if user already has an active subscription
     const existingSubscription = await prisma.subscription.findFirst({
@@ -266,7 +273,7 @@ export async function POST(request: NextRequest) {
 
     const startDate = new Date();
     const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + SUBSCRIPTION_DURATION_DAYS);
+    endDate.setDate(endDate.getDate() + durationDays);
 
     const graceEndDate = new Date(endDate);
     graceEndDate.setDate(graceEndDate.getDate() + GRACE_PERIOD_DAYS);
@@ -275,32 +282,36 @@ export async function POST(request: NextRequest) {
     const result = await prisma.$transaction(async (tx) => {
       const subscription = await tx.subscription.create({
         data: {
-          organizationId: session.user.organizationId,
+          organizationId: session.user.organizationId!,
           userId: session.user.id,
           plan: 'PREMIUM',
           status: 'ACTIVE',
-          amount: 29900, // Rs 299 in paise
+          amount: subscriptionAmount,
           currency: 'INR',
           startDate,
           endDate,
           graceEndDate,
           autoRenew: true,
+          metadata: {
+            billingPeriod: isAnnual ? 'ANNUAL' : 'MONTHLY',
+            durationDays,
+          },
         },
       });
 
       await tx.payment.create({
         data: {
-          organizationId: session.user.organizationId,
+          organizationId: session.user.organizationId!,
           userId: session.user.id,
           subscriptionId: subscription.id,
           razorpayOrderId,
           razorpayPaymentId,
           razorpaySignature,
-          amount: 29900,
+          amount: subscriptionAmount,
           currency: 'INR',
           status: 'SUCCESS',
           paymentType: 'SUBSCRIPTION',
-          description: 'Premium Plan - 30 Days',
+          description: descriptionText,
         },
       });
 
@@ -311,7 +322,7 @@ export async function POST(request: NextRequest) {
     await EmailService.sendSubscriptionEmail(
       session.user.email!,
       'Premium',
-      299,
+      displayPrice,
       endDate.toLocaleDateString()
     );
 

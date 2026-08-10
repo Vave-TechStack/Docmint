@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { TemplateEngine } from '@/lib/engine/template-engine';
 import { DocumentEngine } from '@/lib/engine/document-engine';
+import { validateImageVariables } from '@/lib/utils/image-upload';
 
 // Prevent static rendering - this route needs to call the database
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,15 @@ export async function POST(request: NextRequest) {
     if (!templateId || !variables) {
       return NextResponse.json(
         { success: false, error: 'Missing templateId or variables' },
+        { status: 400 }
+      );
+    }
+
+    // Enforce the shared image whitelist + size policy on data-URL variables
+    const imageError = validateImageVariables(variables);
+    if (imageError) {
+      return NextResponse.json(
+        { success: false, error: imageError },
         { status: 400 }
       );
     }

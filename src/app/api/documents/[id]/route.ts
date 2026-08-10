@@ -13,7 +13,7 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const document = await DocumentEngine.getById(id, session.user.organizationId);
+    const document = await DocumentEngine.getById(id, session.user.organizationId!);
     if (!document) {
       return NextResponse.json({ success: false, error: 'Document not found' }, { status: 404 });
     }
@@ -43,7 +43,7 @@ export async function PATCH(
     const document = await DocumentEngine.update(
       id,
       body,
-      session.user.organizationId,
+      session.user.organizationId!,
       session.user.id
     );
 
@@ -68,7 +68,7 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    await DocumentEngine.delete(id, session.user.organizationId, session.user.id);
+    await DocumentEngine.delete(id, session.user.organizationId!, session.user.id);
 
     return NextResponse.json({ success: true, message: 'Document deleted' });
   } catch (error) {
@@ -91,7 +91,7 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const document = await DocumentEngine.duplicate(id, session.user.organizationId, session.user.id);
+    const document = await DocumentEngine.duplicate(id, session.user.organizationId!, session.user.id);
 
     return NextResponse.json({ success: true, data: document });
   } catch (error) {

@@ -7,12 +7,12 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
     const settings = await prisma.systemSetting.findMany();
-    const settingsMap: Record<string, any> = {};
+    const settingsMap: Record<string, unknown> = {};
     settings.forEach((s) => { settingsMap[s.key] = s.value; });
 
     return NextResponse.json({ success: true, data: settingsMap });
@@ -25,7 +25,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -38,13 +38,13 @@ export async function PUT(request: NextRequest) {
 
     await prisma.systemSetting.upsert({
       where: { key },
-      update: { value: value as any, category: category || 'general' },
-      create: { key, value: value as any, category: category || 'general' },
+      update: { value, category: category || 'general' },
+      create: { key, value, category: category || 'general' },
     });
 
     await prisma.auditLog.create({
       data: {
-        organizationId: (session.user as any).organizationId,
+        organizationId: session.user.organizationId ?? '',
         userId: session.user.id,
         action: 'SETTINGS_UPDATED',
         entity: 'SystemSetting',
@@ -63,7 +63,7 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || (session.user as any).role !== 'SUPER_ADMIN') {
+    if (!session?.user || session.user.role !== 'SUPER_ADMIN') {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 

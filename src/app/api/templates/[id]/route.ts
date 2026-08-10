@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { TemplateEngine } from '@/lib/engine/template-engine';
-import { prisma } from '@/lib/prisma';
-import { toJson } from '@/lib/utils/prisma-json';
-import { findSampleById, inferType } from '@/lib/data/sample-templates';
+import { findSampleById, sampleToTemplateData } from '@/lib/data/sample-templates';
+import { validateVariableDefaultImages } from '@/lib/utils/image-upload';
 
 export async function GET(
   _request: NextRequest,
@@ -27,30 +26,9 @@ export async function GET(
     // Fallback: check static sample data
     const sample = findSampleById(id);
     if (sample) {
-      const optional = ['photo', 'image', 'logo', 'seal', 'watermark', 'optional'];
-      const variables = sample.placeholders.map((key: string) => {
-        const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()).trim();
-        return {
-          key,
-          label,
-          type: inferType(key),
-          required: !optional.some((o) => key.toLowerCase().includes(o)),
-          placeholder: `Enter ${label}`,
-          defaultValue: '',
-          options: [],
-        };
-      });
-
       return NextResponse.json({
         success: true,
-        data: {
-          ...sample,
-          content: {},
-          htmlTemplate: '',
-          variables,
-          isDefault: true,
-          thumbnail: null,
-        },
+        data: sampleToTemplateData(sample),
         usingFallback: true,
       });
     }
@@ -81,10 +59,19 @@ export async function PATCH(
     const { id } = await params;
     const body = await request.json();
 
+    // Enforce the shared image whitelist + size policy on variable defaults
+    const imageError = validateVariableDefaultImages((body as { variables?: unknown }).variables);
+    if (imageError) {
+      return NextResponse.json(
+        { success: false, error: imageError },
+        { status: 400 }
+      );
+    }
+
     const template = await TemplateEngine.update(
       id,
       body,
-      session.user.organizationId
+      session.user.organizationId!
     );
 
     return NextResponse.json({ success: true, data: template });
@@ -108,7 +95,7 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    await TemplateEngine.delete(id, session.user.organizationId);
+    await TemplateEngine.delete(id, session.user.organizationId!);
 
     return NextResponse.json({ success: true, message: 'Template deleted' });
   } catch (error) {

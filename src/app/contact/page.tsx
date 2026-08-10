@@ -44,8 +44,8 @@ export default function ContactPage() {
       }
       setSent(true);
       toast.success(data.message || 'Message sent! We will get back to you soon.');
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to send message. Please try again later.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send message. Please try again later.');
     } finally {
       setSending(false);
     }

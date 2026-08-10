@@ -69,8 +69,8 @@ export default function SignupPage() {
 
       toast.success('Account created! Please sign in.');
       router.push('/login');
-    } catch (error: any) {
-      toast.error(error.message || 'Something went wrong');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Something went wrong');
     } finally {
       setIsLoading(false);
     }

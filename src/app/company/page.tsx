@@ -3,8 +3,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
+import { ALLOWED_IMAGE_TYPES_ACCEPT } from '@/lib/utils/constants';
+import { validateImageUpload } from '@/lib/utils/image-upload';
 import {
   Building2,
   Palette,
@@ -17,7 +20,7 @@ import {
   X,
   CheckCircle2,
   Eye,
-  Image,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface CompanyProfile {
@@ -53,6 +56,55 @@ interface CompanyProfile {
   fontSize: string;
 }
 
+// ─── Live Preview (module scope — receives the editable form as a prop) ───
+function LivePreview({ form }: { form: CompanyProfile }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100" style={{ backgroundColor: form.primaryColor + '10' }}>
+        <Eye className="w-4 h-4 text-gray-500" />
+        <span className="text-xs font-medium text-gray-600">Live Preview</span>
+      </div>
+      <div className="p-6" style={{ fontFamily: form.fontFamily }}>
+        {form.companyLogo && (
+          <div className="flex justify-center mb-4">
+            {/* eslint-disable-next-line @next/next/no-img-element -- base64 data-URL upload, content-sized parent, unknown dims; unoptimized next/image is a passthrough */}
+            <img src={form.companyLogo} alt="Logo" className="max-h-16 object-contain" />
+          </div>
+        )}
+        <div className="text-center mb-4">
+          <h2 className="text-lg font-bold" style={{ color: form.primaryColor }}>
+            {form.companyName || 'Your Company Name'}
+          </h2>
+          {form.companyAddress && (
+            <p className="text-xs text-gray-500 mt-1">{form.companyAddress}</p>
+          )}
+          <div className="flex items-center justify-center gap-3 text-xs text-gray-400 mt-1">
+            {form.companyEmail && <span>{form.companyEmail}</span>}
+            {form.companyPhone && <span>{form.companyPhone}</span>}
+            {form.companyWebsite && <span>{form.companyWebsite}</span>}
+          </div>
+        </div>
+        <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+          {form.gstNumber && <span className="px-2 py-1 rounded bg-gray-50">GST: {form.gstNumber}</span>}
+          {form.panNumber && <span className="px-2 py-1 rounded bg-gray-50">PAN: {form.panNumber}</span>}
+          {form.cinNumber && <span className="px-2 py-1 rounded bg-gray-50">CIN: {form.cinNumber}</span>}
+        </div>
+        {form.companySeal && (
+          <div className="flex justify-center mt-4">
+            {/* eslint-disable-next-line @next/next/no-img-element -- base64 data-URL upload, content-sized parent, unknown dims; unoptimized next/image is a passthrough */}
+            <img src={form.companySeal} alt="Seal" className="max-h-14 object-contain opacity-80" />
+          </div>
+        )}
+        {form.footerText && (
+          <div className="mt-4 pt-3 border-t border-gray-200 text-center text-xs text-gray-400">
+            {form.footerText}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const FONT_OPTIONS = ['Inter', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Courier New', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Garamond'];
 const TABS = [
   { id: 'branding', label: 'Branding', icon: Palette },
@@ -65,11 +117,10 @@ const TABS = [
 type TabId = typeof TABS[number]['id'];
 
 export default function CompanyProfilePage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<TabId>('branding');
-  const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -116,7 +167,11 @@ export default function CompanyProfilePage() {
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login');
-    if (status === 'authenticated') fetchProfile();
+    if (status === 'authenticated') {
+      // Intentional: load the profile once authenticated.
+      // eslint-disable-next-line react-hooks/immutability
+      fetchProfile();
+    }
   }, [status, router]);
 
   const fetchProfile = async () => {
@@ -124,7 +179,6 @@ export default function CompanyProfilePage() {
       const res = await fetch('/api/company/profile');
       const data = await res.json();
       if (data.success && data.data) {
-        setProfile(data.data);
         setForm(data.data);
       }
     } catch {
@@ -139,9 +193,14 @@ export default function CompanyProfilePage() {
     setHasChanges(true);
   }, []);
 
-  // File to base64
+  // File to base64 (validated against the shared image whitelist + size policy)
   const handleFileUpload = useCallback((field: keyof CompanyProfile, file: File | null) => {
     if (!file) return;
+    const validationError = validateImageUpload(file);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       const dataUrl = e.target?.result as string;
@@ -160,7 +219,6 @@ export default function CompanyProfilePage() {
       });
       const data = await res.json();
       if (data.success) {
-        setProfile(data.data);
         setForm(data.data);
         setHasChanges(false);
         toast.success('Company profile saved');
@@ -186,9 +244,12 @@ export default function CompanyProfilePage() {
       <div className="flex items-center gap-4">
         {currentValue ? (
           <div className="relative group">
-            <img
+            <Image
               src={currentValue}
               alt={label}
+              width={80}
+              height={80}
+              unoptimized
               className="w-20 h-20 object-contain rounded-lg border border-gray-200 bg-white p-1"
             />
             <button
@@ -200,7 +261,7 @@ export default function CompanyProfilePage() {
           </div>
         ) : (
           <div className="w-20 h-20 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50">
-            <Image className="w-6 h-6 text-gray-400" />
+            <ImageIcon className="w-6 h-6 text-gray-400" />
           </div>
         )}
         <div className="flex-1">
@@ -218,9 +279,14 @@ export default function CompanyProfilePage() {
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+        accept={ALLOWED_IMAGE_TYPES_ACCEPT}
         className="hidden"
-        onChange={(e) => handleFileUpload(field, e.target.files?.[0] || null)}
+        onChange={(e) => {
+          const file = e.target.files?.[0] || null;
+          // Reset input immediately so a rejected file can be re-selected
+          e.target.value = '';
+          handleFileUpload(field, file);
+        }}
       />
     </div>
   );
@@ -250,51 +316,6 @@ export default function CompanyProfilePage() {
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       )}
-    </div>
-  );
-
-  // ─── Live Preview ───
-  const LivePreview = () => (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100" style={{ backgroundColor: form.primaryColor + '10' }}>
-        <Eye className="w-4 h-4 text-gray-500" />
-        <span className="text-xs font-medium text-gray-600">Live Preview</span>
-      </div>
-      <div className="p-6" style={{ fontFamily: form.fontFamily }}>
-        {form.companyLogo && (
-          <div className="flex justify-center mb-4">
-            <img src={form.companyLogo} alt="Logo" className="max-h-16 object-contain" />
-          </div>
-        )}
-        <div className="text-center mb-4">
-          <h2 className="text-lg font-bold" style={{ color: form.primaryColor }}>
-            {form.companyName || 'Your Company Name'}
-          </h2>
-          {form.companyAddress && (
-            <p className="text-xs text-gray-500 mt-1">{form.companyAddress}</p>
-          )}
-          <div className="flex items-center justify-center gap-3 text-xs text-gray-400 mt-1">
-            {form.companyEmail && <span>{form.companyEmail}</span>}
-            {form.companyPhone && <span>{form.companyPhone}</span>}
-            {form.companyWebsite && <span>{form.companyWebsite}</span>}
-          </div>
-        </div>
-        <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
-          {form.gstNumber && <span className="px-2 py-1 rounded bg-gray-50">GST: {form.gstNumber}</span>}
-          {form.panNumber && <span className="px-2 py-1 rounded bg-gray-50">PAN: {form.panNumber}</span>}
-          {form.cinNumber && <span className="px-2 py-1 rounded bg-gray-50">CIN: {form.cinNumber}</span>}
-        </div>
-        {form.companySeal && (
-          <div className="flex justify-center mt-4">
-            <img src={form.companySeal} alt="Seal" className="max-h-14 object-contain opacity-80" />
-          </div>
-        )}
-        {form.footerText && (
-          <div className="mt-4 pt-3 border-t border-gray-200 text-center text-xs text-gray-400">
-            {form.footerText}
-          </div>
-        )}
-      </div>
     </div>
   );
 
@@ -491,9 +512,12 @@ export default function CompanyProfilePage() {
                     {renderInput('UPI ID', 'upiId', 'text', 'company@upi')}
                     {form.upiId && (
                       <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-                        <img
+                        <Image
                           src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(form.upiId)}`}
                           alt="UPI QR"
+                          width={80}
+                          height={80}
+                          unoptimized
                           className="w-20 h-20 rounded-lg border border-gray-200"
                         />
                         <div>
@@ -569,7 +593,7 @@ export default function CompanyProfilePage() {
           {/* Right - Live Preview Sidebar */}
           <div className="w-full lg:w-80 flex-shrink-0">
             <div className="lg:sticky lg:top-8 space-y-4">
-              <LivePreview />
+              <LivePreview form={form} />
 
               {/* Quick Stats */}
               <div className="bg-white rounded-xl border border-gray-200 p-4">

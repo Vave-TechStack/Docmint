@@ -2,29 +2,21 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import toast from 'react-hot-toast';
 import {
   DollarSign,
   TrendingUp,
-  TrendingDown,
   Activity,
   CreditCard,
-  Download,
   Calendar,
   ArrowUpRight,
   ArrowDownRight,
   Users,
   Crown,
   FileText,
-  RotateCcw,
-  Ban,
-  Percent,
-  Wallet,
   BarChart3,
   PieChart,
-  RefreshCw,
   Loader2,
   AlertTriangle,
   Zap,
@@ -72,7 +64,6 @@ export default function AdminRevenuePage() {
   const [chartView, setChartView] = useState<'daily' | 'monthly'>('daily');
 
   const fetchRevenue = useCallback(async () => {
-    setIsLoading(true);
     try {
       const res = await fetch(`/api/admin/revenue?period=${period}`);
       const result = await res.json();
@@ -85,6 +76,8 @@ export default function AdminRevenuePage() {
     }
   }, [period]);
 
+  // Intentional: fetch on mount/period change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchRevenue(); }, [fetchRevenue]);
 
   const formatCurrency = (amount: number) => {
@@ -245,8 +238,7 @@ export default function AdminRevenuePage() {
                 const totalH = Math.max((item.total / maxVal) * 100, 2);
                 const subH = Math.max((item.subscription / maxVal) * 100, 0);
                 const instH = Math.max((item.instant / maxVal) * 100, 0);
-                const isMonthly = 'month' in item;
-                const label = isMonthly ? (item as any).month : (item as any).date?.slice(5);
+                const label = 'month' in item ? item.month : item.date.slice(5);
 
                 return (
                   <div key={i} className="flex-1 min-w-[30px] flex flex-col items-center group">
@@ -501,7 +493,7 @@ export default function AdminRevenuePage() {
                 {chartData.slice(-20).map((item, i) => {
                   const prev = i > 0 ? chartData.slice(-20)[i - 1].total : 0;
                   const growth = prev > 0 ? ((item.total - prev) / prev) * 100 : 0;
-                  const label = 'month' in item ? (item as any).month : (item as any).date?.slice(5);
+                  const label = 'month' in item ? item.month : item.date.slice(5);
 
                   return (
                     <tr key={i} className="hover:bg-gray-50 transition-colors">

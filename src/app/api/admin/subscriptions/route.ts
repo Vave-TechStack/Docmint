@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -95,7 +95,7 @@ export async function PATCH(request: NextRequest) {
         });
         await prisma.auditLog.create({
           data: {
-            organizationId: (session.user as any).organizationId,
+            organizationId: session.user.organizationId ?? '',
             userId: session.user.id,
             action: 'SUBSCRIPTION_CANCELLED',
             entity: 'Subscription',
@@ -129,7 +129,7 @@ export async function PATCH(request: NextRequest) {
         if (!newPlan) return NextResponse.json({ success: false, error: 'Plan is required' }, { status: 400 });
         await prisma.subscription.update({
           where: { id: subscriptionId },
-          data: { plan: newPlan as any },
+          data: { plan: newPlan },
         });
         break;
       }

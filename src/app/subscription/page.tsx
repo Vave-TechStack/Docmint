@@ -6,8 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import {
   Crown,
   Loader2,
@@ -19,9 +18,7 @@ import {
   Clock,
   RotateCcw,
   Ban,
-  Zap,
   Sparkles,
-  Infinity,
 } from 'lucide-react';
 
 interface SubscriptionInfo {
@@ -37,15 +34,20 @@ interface SubscriptionInfo {
 }
 
 export default function SubscriptionPage() {
-  const { data: session, status: authStatus } = useSession();
+  const { status: authStatus } = useSession();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
+  const [daysLeft, setDaysLeft] = useState(0);
   const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (authStatus === 'unauthenticated') router.push('/login');
-    if (authStatus === 'authenticated') fetchSubscription();
+    if (authStatus === 'authenticated') {
+      // Intentional: load the subscription once authenticated.
+      // eslint-disable-next-line react-hooks/immutability
+      fetchSubscription();
+    }
   }, [authStatus, router]);
 
   const fetchSubscription = async () => {
@@ -53,7 +55,9 @@ export default function SubscriptionPage() {
       const res = await fetch('/api/subscriptions');
       const data = await res.json();
       if (data.success && data.data) {
-        setSubscription(data.data[0] || null);
+        const sub = data.data[0] || null;
+        setSubscription(sub);
+        setDaysLeft(sub ? Math.ceil((new Date(sub.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 0);
       }
     } catch {
       // No subscription yet - that's fine for free users
@@ -99,10 +103,6 @@ export default function SubscriptionPage() {
       </div>
     );
   }
-
-  const daysLeft = subscription
-    ? Math.ceil((new Date(subscription.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-    : 0;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-gradient-to-br from-gray-50 via-white to-blue-50">

@@ -13,7 +13,7 @@ export async function GET(
     }
 
     const { id } = await params;
-    const shares = await DocumentEngine.getShares(id, session.user.organizationId);
+    const shares = await DocumentEngine.getShares(id, session.user.organizationId!);
     return NextResponse.json({ success: true, data: shares });
   } catch (error) {
     console.error('Shares list error:', error);
@@ -39,7 +39,7 @@ export async function POST(
 
     const share = await DocumentEngine.createShare(
       id,
-      session.user.organizationId,
+      session.user.organizationId!,
       session.user.id,
       {
         shareType: body.shareType || 'LINK',
@@ -60,17 +60,13 @@ export async function POST(
   }
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(request: NextRequest) {
   try {
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { id } = await params;
     const { searchParams } = new URL(request.url);
     const shareId = searchParams.get('shareId');
 
@@ -81,7 +77,7 @@ export async function DELETE(
       );
     }
 
-    await DocumentEngine.revokeShare(shareId, session.user.organizationId);
+    await DocumentEngine.revokeShare(shareId, session.user.organizationId!);
     return NextResponse.json({ success: true, message: 'Share link revoked' });
   } catch (error) {
     console.error('Share revoke error:', error);

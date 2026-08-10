@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -71,7 +71,6 @@ export default function AdminSubscriptionsPage() {
   const [showPlanModal, setShowPlanModal] = useState(false);
 
   const fetchSubscriptions = useCallback(async () => {
-    setIsLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '20' });
       if (search) params.set('search', search);
@@ -84,13 +83,17 @@ export default function AdminSubscriptionsPage() {
         setSubscriptions(data.data || []);
         setTotal(data.total || 0);
       }
-    } catch (err) { console.error(err); }
-    finally { setIsLoading(false); }
+    } catch (err) {
+      console.error('Subscriptions fetch error:', err);
+      toast.error('Failed to load subscriptions');
+    } finally { setIsLoading(false); }
   }, [page, search, statusFilter, planFilter]);
 
+  // Intentional: fetch on mount/filter change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchSubscriptions(); }, [fetchSubscriptions]);
 
-  const handleAction = async (subscriptionId: string, action: string, extra: Record<string, any> = {}) => {
+  const handleAction = async (subscriptionId: string, action: string, extra: Record<string, unknown> = {}) => {
     setProcessing(true);
     try {
       const res = await fetch('/api/admin/subscriptions', {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { validateImageVariables } from '@/lib/utils/image-upload';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,7 @@ export async function GET() {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    let profile = await prisma.companyProfile.findFirst({
+    const profile = await prisma.companyProfile.findFirst({
       where: {
         organizationId: session.user.organizationId,
         userId: session.user.id,
@@ -107,6 +108,24 @@ export async function PUT(request: NextRequest) {
       fontSize,
     } = body;
 
+    // Enforce the shared image whitelist + size policy on logo/seal/signature fields
+    const imageError = validateImageVariables({
+      companyLogo,
+      companyLogoDark,
+      companyLogoLight,
+      companySeal,
+      authorizedSign,
+      hrSignature,
+      directorSignature,
+      financeSignature,
+    });
+    if (imageError) {
+      return NextResponse.json(
+        { success: false, error: imageError },
+        { status: 400 }
+      );
+    }
+
     // Find existing profile
     const existing = await prisma.companyProfile.findFirst({
       where: {
@@ -158,7 +177,7 @@ export async function PUT(request: NextRequest) {
       profile = await prisma.companyProfile.create({
         data: {
           ...data,
-          organizationId: session.user.organizationId,
+          organizationId: session.user.organizationId!,
           userId: session.user.id,
           isDefault: true,
           isActive: true,

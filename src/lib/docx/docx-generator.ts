@@ -7,13 +7,9 @@ import {
   Table,
   TableRow,
   TableCell,
-  HeadingLevel,
   AlignmentType,
-  BorderStyle,
-  PageBreak,
-  Header,
-  Footer,
   ImageRun,
+  PageBreak,
 } from 'docx';
 
 /**
@@ -120,12 +116,6 @@ export class DOCXGenerator {
   private static async parseHtmlToDocxElements(html: string): Promise<(Paragraph | Table)[]> {
     const elements: (Paragraph | Table)[] = [];
 
-    // Split by block-level tags to process each section
-    const blockRegex = /(<(?:p|div|h[1-6]|table|tr|td|th|li|br)(?:[^>]*>)[\s\S]*?<\/(?:p|div|h[1-6]|table|tr|td|th|li)>|<br\s*\/?>)/gi;
-
-    let lastIndex = 0;
-    let match;
-
     // Helper to process inline content (text + images)
     const processInlineContent = async (text: string, defaultBold: boolean = false, defaultSize: number = 22): Promise<(Paragraph | Table)[]> => {
       const elements: (Paragraph | Table)[] = [];
@@ -135,7 +125,6 @@ export class DOCXGenerator {
       const imgRegex = /<img[^>]+src="([^"]*)"[^>]*\/?>/gi;
       let imgMatch;
       let textCursor = 0;
-      let textBuffer = text;
 
       while ((imgMatch = imgRegex.exec(text)) !== null) {
         // Add text before this image
@@ -158,7 +147,7 @@ export class DOCXGenerator {
       if (parts.length === 0) return [];
 
       // Group consecutive text parts into one paragraph
-      let currentRuns: (TextRun | ImageRun)[] = [];
+      const currentRuns: (TextRun | ImageRun)[] = [];
       let textAccumulator = '';
 
       const flushText = () => {
@@ -211,10 +200,6 @@ export class DOCXGenerator {
       return elements;
     };
 
-    // Handle image-only tags (just standalone img tags)
-    const standaloneImgRegex = /<img[^>]+src="([^"]*)"[^>]*\/?>/gi;
-    let processedHtml = html;
-
     // Process the HTML block by block
     // First, wrap the entire HTML in a container for processing
     const container = `<docroot>${html}</docroot>`;
@@ -241,7 +226,6 @@ export class DOCXGenerator {
 
         // Handle block-level tags
         if (tagLower.startsWith('<p') || tagLower.startsWith('</p') ||
-            tagLower.startsWith('<div') || tagLower.startsWith('</div') ||
             tagLower.startsWith('<h1') || tagLower.startsWith('</h1') ||
             tagLower.startsWith('<h2') || tagLower.startsWith('</h2') ||
             tagLower.startsWith('<h3') || tagLower.startsWith('</h3') ||
@@ -251,11 +235,19 @@ export class DOCXGenerator {
             tagLower.startsWith('<br') || tagLower.startsWith('<li') || tagLower.startsWith('</li')) {
           await flushText();
         }
-        // Handle table tags - we'll skip complex table parsing but preserve content
-        else if (tagLower.startsWith('<table') || tagLower.startsWith('</table') ||
-                 tagLower.startsWith('<tr') || tagLower.startsWith('</tr') ||
-                 tagLower.startsWith('<td') || tagLower.startsWith('</td') ||
-                 tagLower.startsWith('<th') || tagLower.startsWith('</th')) {
+        // Handle the editor's page-break marker div (.doc-page-break) — emit a
+        // real Word page break so exported DOCX honors the editor's A4 pages.
+        else if (tagLower.startsWith('<div') && tagLower.includes('doc-page-break')) {
+          await flushText();
+          elements.push(
+            new Paragraph({
+              children: [new PageBreak()],
+              spacing: { after: 0, before: 0 },
+            })
+          );
+        }
+        // Handle generic divs as block boundaries (content preserved)
+        else if (tagLower.startsWith('<div') || tagLower.startsWith('</div')) {
           await flushText();
         }
         // Handle images

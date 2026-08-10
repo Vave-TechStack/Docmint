@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import { toJson } from '@/lib/utils/prisma-json';
-import type { TemplateData, TemplateVariable } from '@/types';
+import { inferImageSubtype } from '@/lib/utils/image-upload';
+import type { TemplateData, TemplateVariable, TemplateVisibility } from '@/types';
 import { DocumentEngine } from './document-engine';
 
 /**
@@ -96,7 +98,7 @@ export class TemplateEngine {
 
     let variables: TemplateVariable[] = input.variables && input.variables.length > 0
       ? input.variables
-      : (existing.variables as any) || [];
+      : (existing.variables as unknown as TemplateVariable[]) || [];
     let placeholders = existing.placeholders;
 
     // If htmlTemplate changed, re-detect placeholders and merge with user variables
@@ -129,7 +131,7 @@ export class TemplateEngine {
     }
 
     // Build update data, explicitly mapping category to documentCategory
-    const updateData: Record<string, unknown> = {
+    const updateData: Prisma.TemplateUpdateInput = {
       version: existing.version + 1,
       variables: toJson(variables),
       placeholders,
@@ -146,7 +148,7 @@ export class TemplateEngine {
 
     const template = await prisma.template.update({
       where: { id },
-      data: updateData as any,
+      data: updateData,
     });
 
     await prisma.templateVersion.create({
@@ -195,7 +197,7 @@ export class TemplateEngine {
       conditions.push({ documentCategory: options.documentCategory });
     }
     if (options.visibility) {
-      conditions.push({ visibility: options.visibility as any });
+      conditions.push({ visibility: options.visibility as TemplateVisibility });
     }
     if (options.isPremium !== undefined) {
       conditions.push({ isPremium: options.isPremium });
@@ -273,7 +275,7 @@ export class TemplateEngine {
         content: original.content as Record<string, unknown>,
         htmlTemplate: original.htmlTemplate || undefined,
         category: original.documentCategory,
-        visibility: original.visibility as any,
+        visibility: original.visibility,
         isPremium: false,
       },
       tenantId,
@@ -297,8 +299,10 @@ export class TemplateEngine {
     if (lower.includes('date') || lower.includes('joining') || lower.includes('created')) return 'date';
     if (lower.includes('email')) return 'email';
     if (lower.includes('salary') || lower.includes('amount') || lower.includes('price') || lower.includes('total')) return 'number';
-    if (lower.includes('photo') || lower.includes('logo') || lower.includes('image') || lower.includes('seal')) return 'image';
-    if (lower.includes('signature') || lower.includes('sign')) return 'signature';
+    // Only image-eligible fields (logo/sign/stamp/header/…) may be image or
+    // signature type — word-safe, so "Designation" stays text.
+    const imageSubtype = inferImageSubtype(key);
+    if (imageSubtype) return imageSubtype;
     if (lower.includes('address') || lower.includes('description') || lower.includes('note') || lower.includes('terms')) return 'textarea';
     if (lower.includes('gender') || lower.includes('type') || lower.includes('status') || lower.includes('department')) return 'select';
     return 'text';

@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes((session.user as any).role)) {
+    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -100,7 +100,7 @@ export async function GET() {
           name: u.name,
           email: u.email,
           image: u.image || undefined,
-          role: u.role as any,
+          role: u.role,
           organizationId: u.organizationId,
           emailVerified: !!u.emailVerified,
           twoFactorEnabled: false,

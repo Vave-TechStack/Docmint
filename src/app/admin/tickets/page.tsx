@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/text-area';
 import { Modal } from '@/components/ui/modal';
 import toast from 'react-hot-toast';
-import { Ticket, Loader2, MessageSquare, CheckCircle2, Clock, AlertCircle, ArrowUp } from 'lucide-react';
+import { Ticket, Loader2, MessageSquare, Clock } from 'lucide-react';
 
 interface TicketData {
   id: string;
@@ -20,7 +20,7 @@ interface TicketData {
   user: { id: string; name: string; email: string; image?: string };
   organization: { name: string };
   _count: { replies: number };
-  replies?: any[];
+  replies?: unknown[];
 }
 
 const statusColors: Record<string, 'warning' | 'default' | 'success' | 'secondary' | 'danger'> = {
@@ -47,17 +47,20 @@ export default function AdminTicketsPage() {
   const [sendingReply, setSendingReply] = useState(false);
 
   const fetchTickets = useCallback(async () => {
-    setIsLoading(true);
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.set('status', statusFilter);
       const res = await fetch(`/api/admin/tickets?${params}`);
       const data = await res.json();
       if (data.success) setTickets(data.data || []);
-    } catch (err) { console.error(err); }
-    finally { setIsLoading(false); }
+    } catch (err) {
+      console.error('Tickets fetch error:', err);
+      toast.error('Failed to load tickets');
+    } finally { setIsLoading(false); }
   }, [statusFilter]);
 
+  // Intentional: fetch on mount/filter change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchTickets(); }, [fetchTickets]);
 
   const handleStatusChange = async (ticketId: string, status: string) => {

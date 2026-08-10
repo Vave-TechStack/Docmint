@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
@@ -19,12 +19,38 @@ import {
   X,
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
-import { getDefaultImageForPlaceholder } from '@/lib/utils/image-placeholders';
+import { getDefaultImageForPlaceholder, replaceSvgDataUris, rasterizeSvgPlaceholders, isValidImageSource } from '@/lib/utils/image-placeholders';
+import { ALLOWED_IMAGE_TYPES_ACCEPT, IMAGE_UPLOAD_MAX_MB } from '@/lib/utils/constants';
+import { validateImageUpload, isImageFieldKey } from '@/lib/utils/image-upload';
+import { injectCustomSections } from '@/lib/utils/custom-sections';
+import type { CustomSections, CustomSectionField } from '@/lib/utils/custom-sections';
+import { CustomContentCard } from '@/components/custom-content-card';
+
+interface InstantVariable {
+  key: string;
+  label: string;
+  type: string;
+  placeholder?: string;
+  defaultValue?: string;
+  required?: boolean;
+  options?: string[];
+}
+
+interface InstantTemplate {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  documentCategory?: string;
+  category?: string;
+  htmlTemplate?: string;
+  variables: InstantVariable[];
+}
 
 export default function InstantDownloadTemplatePage() {
   const params = useParams();
   const router = useRouter();
-  const [template, setTemplate] = useState<any>(null);
+  const [template, setTemplate] = useState<InstantTemplate | null>(null);
   const [loading, setLoading] = useState(true);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [showPreview, setShowPreview] = useState(false);
@@ -34,21 +60,23 @@ export default function InstantDownloadTemplatePage() {
   const [paymentDetails, setPaymentDetails] = useState<{ paymentId: string; orderId: string; signature: string } | null>(null);
   const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'docx'>('pdf');
   const [downloading, setDownloading] = useState(false);
+  const [sampleDownloading, setSampleDownloading] = useState(false);
+  // User-added custom content (logo / header / footer / extra text fields)
+  const [customLogo, setCustomLogo] = useState('');
+  const [customHeader, setCustomHeader] = useState('');
+  const [customFooter, setCustomFooter] = useState('');
+  const [customFields, setCustomFields] = useState<CustomSectionField[]>([]);
   const paymentDetailsRef = useRef<{ paymentId: string; orderId: string; signature: string } | null>(null);
 
-  useEffect(() => {
-    if (params.slug) fetchTemplate();
-  }, [params.slug]);
-
-  const fetchTemplate = async () => {
+  const fetchTemplate = useCallback(async () => {
     try {
-      const res = await fetch(`/api/templates?slug=${params.slug}&type=PUBLIC`);
+      const res = await fetch(`/api/templates?slug=${params.slug}&type=PUBLIC&isPremium=false`);
       const data = await res.json();
       if (data.success && data.data?.length > 0) {
-        const t = data.data[0];
+        const t = data.data[0] as InstantTemplate;
         setTemplate(t);
         const defaults: Record<string, string> = {};
-        (t.variables || []).forEach((v: any) => {
+        (t.variables || []).forEach((v) => {
           if (v.defaultValue) defaults[v.key] = v.defaultValue;
         });
         setFormValues(defaults);
@@ -62,16 +90,18 @@ export default function InstantDownloadTemplatePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [params.slug, router]);
+
+  useEffect(() => {
+    // Intentional: load the template once the slug is available.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (params.slug) fetchTemplate();
+  }, [params.slug, fetchTemplate]);
 
   const handleImageUpload = (key: string, file: File) => {
-    const validTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif'];
-    if (!validTypes.includes(file.type)) {
-      toast.error('Please upload PNG, JPEG, WEBP, or SVG image');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image must be under 5MB');
+    const validationError = validateImageUpload(file);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
     const reader = new FileReader();
@@ -91,6 +121,14 @@ export default function InstantDownloadTemplatePage() {
     });
   };
 
+  // ─── Custom content helpers ───
+  const getCustomSections = (): CustomSections => ({
+    logo: customLogo || undefined,
+    header: customHeader || undefined,
+    footer: customFooter || undefined,
+    fields: customFields,
+  });
+
   const handlePreview = () => {
     if (!template?.htmlTemplate) return;
     setPreviewLoading(true);
@@ -102,44 +140,75 @@ export default function InstantDownloadTemplatePage() {
         return formValues[key] || fallback;
       });
 
-      // Replace {{Placeholder}} patterns
+      // Replace {{Placeholder}} patterns — validate image sources
       for (const [key, value] of Object.entries(formValues)) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\{\\{${escapedKey}\\}\\}`, 'g');
-        // Use default SVG placeholder for image fields when no image uploaded
-        const resolvedValue = value || getDefaultImageForPlaceholder(key);
+        // Check if this is an image-eligible field (logo/sign/stamp/header/…)
+        const isImgField = isImageFieldKey(key);
+        let resolvedValue: string;
+        if (value) {
+          // User entered a value - use it (validate image sources for img fields)
+          resolvedValue = (isImgField && !isValidImageSource(value))
+            ? getDefaultImageForPlaceholder(key)
+            : value;
+        } else {
+          // No value entered - use placeholder SVG for images, empty string for text
+          resolvedValue = isImgField ? getDefaultImageForPlaceholder(key) : '';
+        }
         html = html.replace(regex, resolvedValue);
       }
 
       // Replace remaining image placeholders with default SVGs; remove others
       html = html.replace(/\{\{([\w.-]+)(?:\:[^}]+)?\}\}/g, (_match: string, key: string) => {
-        const lower = key.toLowerCase();
-        if (lower.includes('logo') || lower.includes('photo') || lower.includes('picture') ||
-            lower.includes('signature') || lower.includes('sign') || lower.includes('seal') ||
-            lower.includes('stamp') || lower.includes('heroimage') || lower.includes('imageurl') ||
-            lower.includes('cover')) {
-          return getDefaultImageForPlaceholder(key);
-        }
-        return '';
+        return isImageFieldKey(key) ? getDefaultImageForPlaceholder(key) : '';
       });
 
-      // Hide broken img tags
+      /**
+       * Convert SVG data URI <img> tags to inline <svg> elements.
+       *
+       * Chrome/Chromium cannot load SVG data URIs in <img> tags inside
+       * sandboxed iframes (sandbox="allow-same-origin"), causing console
+       * errors like "Error loading svg data:...". Converting to inline
+       * <svg> eliminates the loading step entirely.
+       *
+       * @see replaceSvgDataUris in lib/utils/image-placeholders.ts
+       */
+      html = replaceSvgDataUris(html);
+
+      // Add onerror fallback to all img tags to silently hide broken images
       html = html.replace(
-        /<img([^>]*)src=""([^>]*)>/g,
-        '<img$1src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221%22 height=%221%22%3E%3C/svg%3E"$2 style="display:none">'
+        /(<img\s[^>]*?)(?:(\s+onerror\s*=\s*['"][^'"]*['"]))?([^>]*>)/gi,
+        (match: string, before: string, existingOnerror: string, after: string) => {
+          if (existingOnerror) return match;
+          return `${before} onerror="this.style.display='none'"${after}`;
+        }
       );
 
-      // Wrap in A4-styled document
+      // Hide img tags with empty src (prepend display:none safely)
+      html = html.replace(
+        /(<img\s[^>]*?)src=""([^>]*>)/gi,
+        (_match: string, before: string, after: string) => {
+          return `${before}src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" style="display:none"${after}`;
+        }
+      );
+
+      // Inject user-added custom content (logo / header / footer / extra fields)
+      html = injectCustomSections(html, getCustomSections());
+
+      // Wrap in A4-styled document with 0.5in (12.7mm) margins
       const styledHtml = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',Arial,sans-serif;background:#e5e7eb;padding:24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.doc-page{max-width:210mm;min-height:297mm;margin:0 auto;background:white;padding:20mm 15mm;box-shadow:0 4px 12px rgba(0,0,0,0.15)}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#e5e7eb;padding:12.7mm;-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow:hidden;word-wrap:break-word}
+.doc-page{max-width:210mm;min-height:297mm;margin:0 auto;background:white;padding:12.7mm;box-shadow:0 4px 12px rgba(0,0,0,0.15);overflow:hidden}
+.page-content{max-width:184.6mm;margin:0 auto}
 img{max-width:100%;height:auto}
-table{width:100%;border-collapse:collapse}
-@media print{body{background:white;padding:0}.doc-page{box-shadow:none;padding:10mm}}
-</style></head><body><div class="doc-page">${html}</div></body></html>`;
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word}
+@media print{body{background:white;padding:12.7mm;overflow:visible}.doc-page{box-shadow:none;overflow:visible}}
+</style></head><body><div class="doc-page"><div class="page-content">${html}</div></div></body></html>`;
 
       setPreviewHtml(styledHtml);
       setShowPreview(true);
@@ -152,11 +221,96 @@ table{width:100%;border-collapse:collapse}
 
 
 
-  // ─── Download helper — accepts payment details directly (no state lag) ───
+  // ─── Client-side PDF generation using jsPDF (browser-native) ───
+  const generatePDFClientSide = async (rawHtml: string, fileName: string): Promise<void> => {
+    let html = replaceSvgDataUris(rawHtml || '');
+    // jsPDF's doc.html() renders via html2canvas, which cannot load SVG images
+    // in ANY form (inline <svg> logs "Error loading svg data:..."; base64 SVG
+    // data-URI <img> tags log "Error loading image data:image/svg+xml;base64,...")
+    // and drops them from the PDF. Rasterize SVGs to PNG data URIs right before
+    // PDF generation — PNGs load fine there. The sandboxed-iframe preview keeps
+    // the inline <svg> form (replaceSvgDataUris) — this only affects the PDF path.
+    html = await rasterizeSvgPlaceholders(html);
+    html = html.replace(
+      /(<img\s[^>]*?)(?:(\s+onerror\s*=\s*['"][^'"]*['"]))?([^>]*>)/gi,
+      (match, before, existingOnerror, after) => {
+        if (existingOnerror) return match;
+        return `${before} onerror="this.style.display='none'"${after}`;
+      }
+    );
+    // Use dynamic import to avoid bundling jsPDF in initial load
+    const { jsPDF } = await import('jspdf');
+
+    return new Promise((resolve) => {
+      let resolved = false;
+
+      // Helper to fallback to print-to-PDF
+      const fallbackToPrint = () => {
+        if (resolved) return;
+        resolved = true;
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(html);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => printWindow.print(), 500);
+        }
+        resolve();
+      };
+
+      // Safety timeout: fallback to print-to-PDF after 15 seconds
+      const timeout = setTimeout(fallbackToPrint, 15000);
+
+      try {
+        const doc = new jsPDF({
+          format: 'a4',
+          unit: 'mm',
+          orientation: 'portrait',
+        });
+
+        doc.html(html, {
+          callback: (doc) => {
+            clearTimeout(timeout);
+            if (resolved) return;
+            resolved = true;
+            try {
+              const pdfBlob = doc.output('blob');
+              const url = window.URL.createObjectURL(pdfBlob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = fileName;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              window.URL.revokeObjectURL(url);
+              resolve();
+            } catch {
+              fallbackToPrint();
+            }
+          },
+          x: 15,
+          y: 15,
+          width: 180,
+          windowWidth: 794,
+          autoPaging: 'text',
+          margin: [10, 10, 10, 10],
+        });
+      } catch {
+        clearTimeout(timeout);
+        fallbackToPrint();
+      }
+    });
+  };
+
+  // ─── Download helper — handles both PDF (client-side) and DOCX (server-side) ───
   const performDownload = async (
     format: 'pdf' | 'docx',
     payment: { paymentId: string; orderId: string; signature: string }
   ) => {
+    if (!template) {
+      toast.error('Template not found. Please reload the page.');
+      return;
+    }
     setDownloading(true);
     try {
       const res = await fetch('/api/instant/download', {
@@ -166,6 +320,7 @@ table{width:100%;border-collapse:collapse}
           templateId: template.id,
           variables: formValues,
           format,
+          customSections: getCustomSections(),
           ...payment,
         }),
       });
@@ -176,20 +331,77 @@ table{width:100%;border-collapse:collapse}
         return;
       }
 
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${template.slug || template.name}.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      // For DOCX: server returns binary blob (direct download)
+      if (format === 'docx') {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${template.slug || template.name}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }
+      // For PDF: server returns JSON with HTML — generate PDF client-side
+      else {
+        const data = await res.json();
+        if (!data.success || !data.data?.html) {
+          toast.error(data.error || 'Failed to generate document');
+          return;
+        }
+        const { html } = data.data;
+        await generatePDFClientSide(html, `${template.slug || template.name}.pdf`);
+      }
+
       toast.success('Download complete!');
     } catch {
       toast.error('Download failed. Please try again.');
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const handleDownloadSample = async () => {
+    if (!template) {
+      toast.error('Template not found. Please reload the page.');
+      return;
+    }
+    setSampleDownloading(true);
+    try {
+      // Pass the current preview HTML as fallback for sample generation
+      const res = await fetch('/api/instant/sample', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId: template.id,
+          variables: formValues,
+          htmlContent: template.htmlTemplate || '',
+          htmlTemplate: template.htmlTemplate || '',
+          format: 'pdf',
+          customSections: getCustomSections(),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        toast.error(err.error || 'Sample download failed');
+        return;
+      }
+
+      const data = await res.json();
+      if (!data.success || !data.data?.html) {
+        toast.error(data.error || 'Sample download failed');
+        return;
+      }
+
+      const { html, slug } = data.data;
+      await generatePDFClientSide(html, `${slug || 'document'}-SAMPLE.pdf`);
+      toast.success('Free sample PDF downloaded! 📄');
+    } catch {
+      toast.error('Sample download failed. Please try again.');
+    } finally {
+      setSampleDownloading(false);
     }
   };
 
@@ -346,7 +558,8 @@ table{width:100%;border-collapse:collapse}
                   </div>
                 </div>
               ) : (
-                /* Variable Form */
+                <>
+                {/* Variable Form */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
                   <h3 className="text-sm font-semibold text-gray-900 mb-4">
                     Fill in the Details
@@ -355,16 +568,17 @@ table{width:100%;border-collapse:collapse}
 
                   {(template.variables || []).length > 0 ? (
                     <div className="space-y-4">
-                      {template.variables.map((variable: any) => (
+                      {template.variables.map((variable) => (
                         <div key={variable.key}>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
                             {variable.label}
                             {variable.required && <span className="text-red-500 ml-1">*</span>}
                           </label>
-                          {variable.type === 'image' || variable.type === 'signature' ? (
+                          {isImageFieldKey(variable.key) && (variable.type === 'image' || variable.type === 'signature') ? (
                             <div>
                               {formValues[variable.key] ? (
                                 <div className="relative inline-block">
+                                  {/* eslint-disable-next-line @next/next/no-img-element -- base64 data-URL upload, content-sized parent, unknown dims; unoptimized next/image is a passthrough */}
                                   <img src={formValues[variable.key]} alt={variable.label} className="max-h-28 rounded-lg border border-gray-200 object-contain bg-gray-50" />
                                   <button onClick={() => handleClearImage(variable.key)} className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 shadow-sm">
                                     <X className="w-3 h-3" />
@@ -381,9 +595,9 @@ table{width:100%;border-collapse:collapse}
                                     <p className="mt-2 text-xs text-gray-400 group-hover:text-blue-500 transition-colors">
                                       {variable.type === 'signature' ? 'Upload Signature' : 'Upload Image'}
                                     </p>
-                                    <p className="text-[10px] text-gray-300 mt-0.5">PNG, JPEG, WEBP or SVG (max 5MB)</p>
+                                    <p className="text-[10px] text-gray-300 mt-0.5">PNG, JPEG, WEBP, SVG or GIF (max {IMAGE_UPLOAD_MAX_MB}MB)</p>
                                   </div>
-                                  <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif" className="hidden"
+                                  <input type="file" accept={ALLOWED_IMAGE_TYPES_ACCEPT} className="hidden"
                                     onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageUpload(variable.key, f); e.target.value = ''; }} />
                                 </label>
                               )}
@@ -420,14 +634,31 @@ table{width:100%;border-collapse:collapse}
                     <p className="text-sm text-gray-400 text-center py-4">No fields needed — this template is ready to use.</p>
                   )}
 
-                  {/* Preview Button */}
-                  <div className="mt-6 pt-6 border-t border-gray-100">
-                    <Button onClick={handlePreview} disabled={previewLoading} size="lg" className="w-full sm:w-auto">
+                  {/* Action Buttons: Preview & Free Sample Download */}
+                  <div className="mt-6 pt-6 border-t border-gray-100 flex flex-wrap gap-3 items-center">
+                    <Button onClick={handlePreview} disabled={previewLoading} size="lg">
                       {previewLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Eye className="w-4 h-4 mr-2" />}
                       Preview Document
                     </Button>
+                    <Button onClick={handleDownloadSample} disabled={sampleDownloading} variant="outline" size="lg" className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                      {sampleDownloading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2 text-blue-600" />}
+                      Download Free Sample PDF
+                    </Button>
                   </div>
                 </div>
+
+                {/* Add Custom Content — logo / header / footer / extra fields */}
+                <CustomContentCard
+                  logo={customLogo}
+                  onLogoChange={setCustomLogo}
+                  header={customHeader}
+                  onHeaderChange={setCustomHeader}
+                  footer={customFooter}
+                  onFooterChange={setCustomFooter}
+                  fields={customFields}
+                  onFieldsChange={setCustomFields}
+                />
+                </>
               )}
 
               {/* Payment + Download Card (shown after preview) */}
@@ -491,7 +722,7 @@ table{width:100%;border-collapse:collapse}
                 <div className="bg-white rounded-xl border border-gray-200 p-4">
                   <h3 className="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-3">Placeholders ({template.variables.length})</h3>
                   <div className="space-y-1.5">
-                    {template.variables.map((v: any) => (
+                    {template.variables.map((v) => (
                       <div key={v.key} className="flex items-center justify-between text-xs">
                         <span className="font-mono text-gray-600">{`{{${v.key}}}`}</span>
                         <span className={`px-1.5 py-0.5 rounded ${v.required ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-500'}`}>{v.type}</span>

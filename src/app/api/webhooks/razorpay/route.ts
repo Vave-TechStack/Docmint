@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
         const paymentEntity = payload.payment?.entity;
         if (!paymentEntity) break;
 
-        const { id: razorpayPaymentId, order_id: razorpayOrderId, amount, status } = paymentEntity;
+        const { id: razorpayPaymentId, order_id: razorpayOrderId, status } = paymentEntity;
 
         // Update payment record in database
         await prisma.payment.updateMany({
@@ -205,7 +205,7 @@ export async function POST(request: NextRequest) {
         const subEntity = payload.subscription?.entity;
         if (!subEntity) break;
 
-        const { id: razorpaySubId, plan_id, status, start_at, end_at } = subEntity;
+        const { id: razorpaySubId, status, start_at, end_at } = subEntity;
 
         // Find subscription in our DB
         const dbSubscription = await prisma.subscription.findFirst({

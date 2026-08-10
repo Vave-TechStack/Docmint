@@ -74,6 +74,10 @@ export async function verifyTenantAccess(
 ): Promise<boolean> {
   const where: Record<string, string> = { id: resourceId, organizationId: tenantId };
 
-  const count = await (prisma as any)[resourceType].count({ where });
+  // Dynamic model access — typed via an index signature to avoid `any`
+  const count = await (prisma as unknown as Record<
+    string,
+    { count: (args: { where: Record<string, string> }) => Promise<number> }
+  >)[resourceType].count({ where });
   return count > 0;
 }

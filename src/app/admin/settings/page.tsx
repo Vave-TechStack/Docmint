@@ -18,7 +18,7 @@ const tabs = [
 ];
 
 export default function AdminSettingsPage() {
-  const [settings, setSettings] = useState<Record<string, any>>({});
+  const [settings, setSettings] = useState<Record<string, string | number | boolean | undefined>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('general');
   const [saving, setSaving] = useState(false);
@@ -29,11 +29,14 @@ export default function AdminSettingsPage() {
       .then((data) => {
         if (data.success) setSettings(data.data || {});
       })
-      .catch(console.error)
+      .catch((err) => {
+        console.error('Settings fetch error:', err);
+        toast.error('Failed to load settings');
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
-  const handleSave = async (key: string, value: any, category = 'general') => {
+  const handleSave = async (key: string, value: string | number | boolean | undefined, category = 'general') => {
     setSaving(true);
     try {
       const res = await fetch('/api/admin/settings', {
@@ -89,11 +92,11 @@ export default function AdminSettingsPage() {
         <Card>
           <CardHeader><CardTitle>General Settings</CardTitle></CardHeader>
           <CardContent className="space-y-6">
-            <Input label="App Name" value={settings.APP_NAME || 'DocMint'} onChange={(e) => setSettings((p) => ({ ...p, APP_NAME: e.target.value }))} />
-            <Textarea label="App Description" value={settings.APP_DESCRIPTION || ''} onChange={(e) => setSettings((p) => ({ ...p, APP_DESCRIPTION: e.target.value }))} />
+            <Input label="App Name" value={String(settings.APP_NAME || 'DocMint')} onChange={(e) => setSettings((p) => ({ ...p, APP_NAME: e.target.value }))} />
+            <Textarea label="App Description" value={String(settings.APP_DESCRIPTION || '')} onChange={(e) => setSettings((p) => ({ ...p, APP_DESCRIPTION: e.target.value }))} />
             <div className="grid md:grid-cols-2 gap-4">
-              <Input label="Contact Email" type="email" value={settings.CONTACT_EMAIL || ''} onChange={(e) => setSettings((p) => ({ ...p, CONTACT_EMAIL: e.target.value }))} />
-              <Input label="Support Email" type="email" value={settings.SUPPORT_EMAIL || ''} onChange={(e) => setSettings((p) => ({ ...p, SUPPORT_EMAIL: e.target.value }))} />
+              <Input label="Contact Email" type="email" value={String(settings.CONTACT_EMAIL || '')} onChange={(e) => setSettings((p) => ({ ...p, CONTACT_EMAIL: e.target.value }))} />
+              <Input label="Support Email" type="email" value={String(settings.SUPPORT_EMAIL || '')} onChange={(e) => setSettings((p) => ({ ...p, SUPPORT_EMAIL: e.target.value }))} />
             </div>
             <div className="flex justify-end">
               <Button onClick={() => handleSave('APP_NAME', settings.APP_NAME)} disabled={saving}>
@@ -166,8 +169,8 @@ export default function AdminSettingsPage() {
         <Card>
           <CardHeader><CardTitle>Email Configuration</CardTitle></CardHeader>
           <CardContent className="space-y-6">
-            <Input label="From Email" type="email" value={settings.FROM_EMAIL || ''} onChange={(e) => setSettings((p) => ({ ...p, FROM_EMAIL: e.target.value }))} />
-            <Input label="From Name" value={settings.FROM_NAME || 'DocMint'} onChange={(e) => setSettings((p) => ({ ...p, FROM_NAME: e.target.value }))} />
+            <Input label="From Email" type="email" value={String(settings.FROM_EMAIL || '')} onChange={(e) => setSettings((p) => ({ ...p, FROM_EMAIL: e.target.value }))} />
+            <Input label="From Name" value={String(settings.FROM_NAME || 'DocMint')} onChange={(e) => setSettings((p) => ({ ...p, FROM_NAME: e.target.value }))} />
             <div className="flex justify-end">
               <Button onClick={() => { handleSave('FROM_EMAIL', settings.FROM_EMAIL); handleSave('FROM_NAME', settings.FROM_NAME); }} disabled={saving}>
                 <Save className="w-4 h-4 mr-2" /> Save Email Settings

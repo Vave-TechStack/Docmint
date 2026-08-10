@@ -11,7 +11,7 @@ export async function GET() {
 
     const folders = await prisma.folder.findMany({
       where: {
-        organizationId: session.user.organizationId,
+        organizationId: session.user.organizationId!,
         userId: session.user.id,
       },
       include: {
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     const folder = await prisma.folder.create({
       data: {
-        organizationId: session.user.organizationId,
+        organizationId: session.user.organizationId!,
         userId: session.user.id,
         name: name.trim(),
         slug: `${slug}-${Date.now()}`,

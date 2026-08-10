@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -44,15 +44,18 @@ export default function AdminCouponsPage() {
   });
 
   const fetchCoupons = useCallback(async () => {
-    setIsLoading(true);
     try {
       const res = await fetch('/api/admin/coupons');
       const data = await res.json();
       if (data.success) setCoupons(data.data || []);
-    } catch (err) { console.error(err); }
-    finally { setIsLoading(false); }
+    } catch (err) {
+      console.error('Coupons fetch error:', err);
+      toast.error('Failed to load coupons');
+    } finally { setIsLoading(false); }
   }, []);
 
+  // Intentional: fetch on mount/filter change; the callback updates loading + data state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchCoupons(); }, [fetchCoupons]);
 
   const handleCreate = async () => {
