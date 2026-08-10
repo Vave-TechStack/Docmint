@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialStore, designerReducer, expandSelectionToElementIds } from './store';
-import type { DesignerDocument, DesignerElement, DesignerGroup, DesignerPage, DesignerStore } from './types';
+import { createInitialStore, designerReducer, expandSelectionToElementIds, resizeTable } from './store';
+import type { DesignerDocument, DesignerElement, DesignerGroup, DesignerPage, DesignerStore, DesignerTable } from './types';
 
 function el(id: string, zIndex: number): DesignerElement {
   return {
@@ -125,6 +125,104 @@ describe('group-aware element actions', () => {
     const after = designerReducer(grouped, { type: 'DELETE_ELEMENTS', ids: expandSelectionToElementIds([groupId], grouped.groups) });
     expect(after.document.pages[0].elements).toHaveLength(0);
     expect(after.groups).toHaveLength(0);
+  });
+});
+
+function tableOf(rows: number, cols: number, totalColumn = cols - 1): DesignerTable {
+  return {
+    columns: cols,
+    rows,
+    headerRow: false,
+    totalRow: false,
+    totalColumn,
+    cellPadding: 4,
+    borders: true,
+    currency: false,
+    cells: Array.from({ length: rows }, (_, r) =>
+      Array.from({ length: cols }, (_, c) => ({ id: `c${r}x${c}`, content: `${r},${c}` }))
+    ),
+  };
+}
+
+describe('resizeTable', () => {
+  it('returns the same reference when the size is unchanged', () => {
+    const t = tableOf(2, 3);
+    expect(resizeTable(t, 2, 3)).toBe(t);
+  });
+
+  it('grows rows and columns with fresh empty cells, keeping existing content', () => {
+    const t = tableOf(2, 2);
+    const next = resizeTable(t, 3, 4);
+    expect(next.rows).toBe(3);
+    expect(next.columns).toBe(4);
+    expect(next.cells).toHaveLength(3);
+    next.cells.forEach((row) => expect(row).toHaveLength(4));
+    expect(next.cells[0][0].content).toBe('0,0'); // preserved
+    expect(next.cells[2][2].content).toBe(''); // new cell
+    expect(next.cells[2][2].id).not.toBe('c0x0'); // fresh id
+  });
+
+  it('shrinks rows and columns', () => {
+    const t = tableOf(3, 4);
+    const next = resizeTable(t, 2, 2);
+    expect(next.rows).toBe(2);
+    expect(next.columns).toBe(2);
+    expect(next.cells[0].map((c) => c.content)).toEqual(['0,0', '0,1']);
+    expect(next.cells).toHaveLength(2);
+  });
+
+  it('clamps to a minimum of 1x1', () => {
+    const t = tableOf(2, 2);
+    const next = resizeTable(t, 0, -5);
+    expect(next.rows).toBe(1);
+    expect(next.columns).toBe(1);
+    expect(next.cells).toHaveLength(1);
+    expect(next.cells[0]).toHaveLength(1);
+  });
+
+  it('clamps totalColumn when columns shrink below it', () => {
+    const t = tableOf(2, 5, 4); // total column is the last (index 4)
+    const next = resizeTable(t, 2, 3);
+    expect(next.totalColumn).toBe(2);
+  });
+
+  it('keeps totalColumn when it stays in range', () => {
+    const t = tableOf(2, 5, 1);
+    const next = resizeTable(t, 4, 6);
+    expect(next.totalColumn).toBe(1);
+  });
+});
+
+describe('UPDATE_PAGE_SETTINGS_LIVE', () => {
+  it('applies settings without pushing history', () => {
+    const store = createInitialStore('t');
+    const after = designerReducer(store, {
+      type: 'UPDATE_PAGE_SETTINGS_LIVE',
+      pageId: store.activePageId,
+      patch: { marginTop: 12 },
+    });
+    expect(after.document.pages[0].settings.marginTop).toBe(12);
+    expect(after.past).toHaveLength(0);
+    expect(after.future).toHaveLength(0);
+  });
+});
+
+describe('coalesced undo model', () => {
+  it('COMMIT_HISTORY then UNDO restores the pre-edit state (panel/canvas undo point)', () => {
+    const store = loadDoc({
+      version: 1,
+      name: 'Test',
+      pages: [pageWith([el('a', 1)])],
+    });
+    // The panel/canvas capture the undo point BEFORE the no-history edits.
+    const committed = designerReducer(store, { type: 'COMMIT_HISTORY' });
+    const edited = designerReducer(committed, {
+      type: 'UPDATE_ELEMENTS',
+      patches: [{ id: 'a', patch: { x: 99 } }],
+    });
+    const undone = designerReducer(edited, { type: 'UNDO' });
+    expect(undone.document.pages[0].elements[0].x).toBe(0); // pre-edit x restored in ONE step
+    expect(undone.past).toHaveLength(0);
   });
 });
 

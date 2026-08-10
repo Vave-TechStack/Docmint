@@ -1,12 +1,14 @@
 import { createDefaultDesign, createEmptyDesign } from './default-design';
 import { uid } from './element-factory';
 import type {
+  CellDef,
   DesignerAction,
   DesignerDocument,
   DesignerElement,
   DesignerGroup,
   DesignerSnapshot,
   DesignerStore,
+  DesignerTable,
   PageSettings,
 } from './types';
 
@@ -52,6 +54,30 @@ export function expandSelectionToElementIds(ids: string[], groups: DesignerGroup
     else out.push(id);
   }
   return Array.from(new Set(out));
+}
+
+/**
+ * Resize a table to rows×cols (min 1×1): pad new cells on the right/bottom
+ * and trim from the end. Existing cell contents are kept, and totalColumn is
+ * clamped when columns shrink. Returns the same reference when unchanged.
+ */
+export function resizeTable(table: DesignerTable, nextRows: number, nextCols: number): DesignerTable {
+  const rows = Math.max(1, Math.floor(nextRows) || 1);
+  const cols = Math.max(1, Math.floor(nextCols) || 1);
+  if (rows === table.cells.length && cols === table.columns) return table;
+  const cells: CellDef[][] = Array.from({ length: rows }, (_, r) => {
+    const row = table.cells[r] ? [...table.cells[r]] : [];
+    while (row.length < cols) row.push({ id: uid('cell'), content: '' });
+    while (row.length > cols) row.pop();
+    return row;
+  });
+  return {
+    ...table,
+    cells,
+    rows,
+    columns: cols,
+    totalColumn: table.totalColumn >= cols ? cols - 1 : table.totalColumn,
+  };
 }
 
 /** Patch matching elements wherever they live (active page first). */
@@ -383,6 +409,19 @@ export function designerReducer(state: DesignerStore, action: DesignerAction): D
           ),
         },
       });
+
+    case 'UPDATE_PAGE_SETTINGS_LIVE':
+      // No history push: used live while typing in the properties panel — the
+      // single undo point is captured by COMMIT_HISTORY at session start.
+      return {
+        ...state,
+        document: {
+          ...state.document,
+          pages: state.document.pages.map((p) =>
+            p.id === action.pageId ? { ...p, settings: { ...p.settings, ...action.patch } } : p
+          ),
+        },
+      };
 
     case 'UNDO': {
       if (state.past.length === 0) return state;

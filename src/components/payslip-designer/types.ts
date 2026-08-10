@@ -29,6 +29,19 @@ export interface CellDef {
   isHeader?: boolean;
 }
 
+/** Designer table element data (columns/rows metadata + cell grid). */
+export interface DesignerTable {
+  columns: number;
+  rows: number;
+  headerRow: boolean;
+  totalRow: boolean;
+  totalColumn: number; // index of column that sums up
+  cells: CellDef[][];
+  cellPadding: number;
+  borders: boolean;
+  currency: boolean;
+}
+
 export interface DesignerElement {
   id: string;
   type: DesignerElementType;
@@ -52,17 +65,7 @@ export interface DesignerElement {
   shape?: 'rect' | 'circle';
   lineStyle?: 'solid' | 'dashed' | 'dotted';
   // Table
-  table?: {
-    columns: number;
-    rows: number;
-    headerRow: boolean;
-    totalRow: boolean;
-    totalColumn: number; // index of column that sums up
-    cells: CellDef[][];
-    cellPadding: number;
-    borders: boolean;
-    currency: boolean;
-  };
+  table?: DesignerTable;
   // Typography
   fontFamily?: string;
   fontSize?: number;
@@ -186,6 +189,7 @@ export type DesignerAction =
   | { type: 'DUPLICATE_PAGE'; pageId: string }
   | { type: 'SET_ACTIVE_PAGE'; pageId: string }
   | { type: 'UPDATE_PAGE_SETTINGS'; pageId: string; patch: Partial<PageSettings> }
+  | { type: 'UPDATE_PAGE_SETTINGS_LIVE'; pageId: string; patch: Partial<PageSettings> }
   | { type: 'UNDO' }
   | { type: 'REDO' }
   | { type: 'RESET_HISTORY' };

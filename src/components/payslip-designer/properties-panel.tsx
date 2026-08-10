@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { DESIGNER_VARIABLES } from './palette';
 import { uid } from './element-factory';
+import { resizeTable } from './store';
 import { useDesigner } from './store-context';
 import type { DesignerElement } from './types';
 
@@ -51,6 +52,7 @@ function NumberField({
   step = 1,
   min,
   suffix,
+  onBlur,
 }: {
   label: string;
   value: number;
@@ -58,6 +60,7 @@ function NumberField({
   step?: number;
   min?: number;
   suffix?: string;
+  onBlur?: () => void;
 }) {
   return (
     <label className="flex items-center gap-2">
@@ -68,6 +71,7 @@ function NumberField({
         step={step}
         min={min}
         onChange={(e) => onChange(Number(e.target.value) || 0)}
+        onBlur={onBlur}
         className="w-full h-8 rounded-md border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
       {suffix && <span className="text-[10px] text-gray-400">{suffix}</span>}
@@ -75,7 +79,17 @@ function NumberField({
   );
 }
 
-function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function TextField({
+  label,
+  value,
+  onChange,
+  onBlur,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur?: () => void;
+}) {
   return (
     <label className="flex items-center gap-2">
       <span className="text-xs text-gray-500 w-14 shrink-0">{label}</span>
@@ -83,6 +97,7 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         className="w-full h-8 rounded-md border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
     </label>
@@ -116,7 +131,17 @@ function SelectField({
   );
 }
 
-function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function ColorField({
+  label,
+  value,
+  onChange,
+  onBlur,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur?: () => void;
+}) {
   return (
     <label className="flex items-center gap-2">
       <span className="text-xs text-gray-500 w-14 shrink-0">{label}</span>
@@ -124,27 +149,88 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
         type="color"
         value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#1f2937'}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         className="w-9 h-8 rounded-md border border-gray-200 cursor-pointer bg-white"
       />
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         className="w-full h-8 rounded-md border border-gray-200 px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
     </label>
   );
 }
 
+// ─── Coalesced history ───
+// Typing/dragging in the panel used to push one history entry per keystroke,
+// flooding the undo stack. Instead: the session's PRE-edit state is captured
+// once at the first change (COMMIT_HISTORY), updates apply live WITHOUT
+// history (UPDATE_ELEMENTS / UPDATE_PAGE_SETTINGS_LIVE), and the session
+// closes on idle (700ms), blur or unmount — so one typing burst = one undo
+// step, exactly like canvas drags.
+function useCoalescedHistory() {
+  const { dispatch } = useDesigner();
+  const dirtyRef = React.useRef(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const end = React.useCallback(() => {
+    dirtyRef.current = false;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const begin = React.useCallback(() => {
+    if (!dirtyRef.current) {
+      dirtyRef.current = true;
+      // Snapshot the pre-edit state now — the single undo point for this
+      // session. The subsequent live updates add no history of their own.
+      dispatch({ type: 'COMMIT_HISTORY' });
+    }
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, [dispatch]);
+
+  /** Apply a live, no-history update; coalesce its undo step. */
+  const live = React.useCallback(
+    (apply: () => void) => {
+      begin();
+      apply();
+      timerRef.current = setTimeout(end, 700);
+    },
+    [begin, end]
+  );
+
+  /** One-shot action: close any pending typing session, then apply (history-pushing). */
+  const once = React.useCallback(
+    (apply: () => void) => {
+      end();
+      apply();
+    },
+    [end]
+  );
+
+  // Close the session if this tab/panel unmounts mid-edit — the undo point
+  // was already captured by begin(), so the edits stay undoable.
+  React.useEffect(() => () => end(), [end]);
+
+  return { live, once, end };
+}
+
 // ─── Content tab ───
 function ContentTab({ element }: { element: DesignerElement }) {
-  const { updateElement } = useDesigner();
+  const { updateElement, updateElements } = useDesigner();
+  const { live: liveApply, once, end } = useCoalescedHistory();
+  const live = (patch: Partial<DesignerElement>) => liveApply(() => updateElements([{ id: element.id, patch }]));
+  const onceUpdate = (patch: Partial<DesignerElement>) => once(() => updateElement(element.id, patch));
   const [insertKey, setInsertKey] = useState('');
 
   const insertVariable = () => {
     if (!insertKey) return;
     const token = `{{${insertKey}}}`;
-    updateElement(element.id, {
+    onceUpdate({
       text: `${element.text || ''}${element.text && !element.text.endsWith(' ') ? ' ' : ''}${token}`,
       binding: { kind: 'mixed', tokens: [] },
     });
@@ -157,7 +243,8 @@ function ContentTab({ element }: { element: DesignerElement }) {
         <TextField
           label="Image"
           value={element.imageSrc || ''}
-          onChange={(v) => updateElement(element.id, { imageSrc: v, binding: { kind: 'plain' } })}
+          onChange={(v) => live({ imageSrc: v, binding: { kind: 'plain' } })}
+          onBlur={end}
         />
         <p className="text-[10px] text-gray-400">Paste a data: URL or use a token like {'{{CompanyLogo}}'}</p>
       </div>
@@ -169,7 +256,8 @@ function ContentTab({ element }: { element: DesignerElement }) {
       <TextField
         label="QR value"
         value={element.qrValue || ''}
-        onChange={(v) => updateElement(element.id, { qrValue: v })}
+        onChange={(v) => live({ qrValue: v })}
+        onBlur={end}
       />
     );
   }
@@ -179,7 +267,7 @@ function ContentTab({ element }: { element: DesignerElement }) {
       <SelectField
         label="Icon"
         value={element.iconName || 'Building2'}
-        onChange={(v) => updateElement(element.id, { iconName: v })}
+        onChange={(v) => onceUpdate({ iconName: v })}
         options={['Building2', 'Landmark', 'User', 'CalendarDays', 'Banknote', 'Receipt', 'Wallet'].map((n) => ({ value: n, label: n }))}
       />
     );
@@ -192,7 +280,8 @@ function ContentTab({ element }: { element: DesignerElement }) {
         <label className="block text-xs text-gray-500 mb-1">Text content</label>
         <textarea
           value={element.text || ''}
-          onChange={(e) => updateElement(element.id, { text: e.target.value })}
+          onChange={(e) => live({ text: e.target.value })}
+          onBlur={end}
           rows={4}
           className="w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
         />
@@ -224,8 +313,10 @@ function ContentTab({ element }: { element: DesignerElement }) {
 
 // ─── Style tab ───
 function StyleTab({ element }: { element: DesignerElement }) {
-  const { updateElement } = useDesigner();
-  const up = (patch: Partial<DesignerElement>) => updateElement(element.id, patch);
+  const { updateElement, updateElements } = useDesigner();
+  const { live: liveApply, once, end } = useCoalescedHistory();
+  const live = (patch: Partial<DesignerElement>) => liveApply(() => updateElements([{ id: element.id, patch }]));
+  const up = (patch: Partial<DesignerElement>) => once(() => updateElement(element.id, patch)); // one-shot → own undo step
 
   const isText = element.type === 'text';
   const isTable = element.type === 'table';
@@ -240,8 +331,8 @@ function StyleTab({ element }: { element: DesignerElement }) {
             onChange={(v) => up({ fontFamily: v })}
             options={FONT_OPTIONS.map((f) => ({ value: f, label: f }))}
           />
-          <NumberField label="Size" value={element.fontSize ?? 11} onChange={(v) => up({ fontSize: v })} min={4} />
-          <NumberField label="Weight" value={element.fontWeight ?? 400} onChange={(v) => up({ fontWeight: v })} min={100} step={100} />
+          <NumberField label="Size" value={element.fontSize ?? 11} onChange={(v) => live({ fontSize: v })} min={4} onBlur={end} />
+          <NumberField label="Weight" value={element.fontWeight ?? 400} onChange={(v) => live({ fontWeight: v })} min={100} step={100} onBlur={end} />
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500 w-14 shrink-0">Align</span>
             <div className="flex gap-1">
@@ -260,9 +351,9 @@ function StyleTab({ element }: { element: DesignerElement }) {
               ))}
             </div>
           </div>
-          <ColorField label="Color" value={element.color || '#1f2937'} onChange={(v) => up({ color: v })} />
-          <NumberField label="Line h." value={element.lineHeight ?? 1.3} onChange={(v) => up({ lineHeight: v })} step={0.1} />
-          <NumberField label="Spacing" value={element.letterSpacing ?? 0} onChange={(v) => up({ letterSpacing: v })} />
+          <ColorField label="Color" value={element.color || '#1f2937'} onChange={(v) => live({ color: v })} onBlur={end} />
+          <NumberField label="Line h." value={element.lineHeight ?? 1.3} onChange={(v) => live({ lineHeight: v })} step={0.1} onBlur={end} />
+          <NumberField label="Spacing" value={element.letterSpacing ?? 0} onChange={(v) => live({ letterSpacing: v })} onBlur={end} />
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500 w-14 shrink-0">Style</span>
             <div className="flex gap-1">
@@ -284,14 +375,14 @@ function StyleTab({ element }: { element: DesignerElement }) {
       )}
 
       <Section title="Position & Size">
-        <NumberField label="X" value={element.x} onChange={(v) => up({ x: v })} />
-        <NumberField label="Y" value={element.y} onChange={(v) => up({ y: v })} />
-        <NumberField label="W" value={element.width} onChange={(v) => up({ width: Math.max(4, v) })} />
-        <NumberField label="H" value={element.height} onChange={(v) => up({ height: Math.max(4, v) })} />
+        <NumberField label="X" value={element.x} onChange={(v) => live({ x: v })} onBlur={end} />
+        <NumberField label="Y" value={element.y} onChange={(v) => live({ y: v })} onBlur={end} />
+        <NumberField label="W" value={element.width} onChange={(v) => live({ width: Math.max(4, v) })} onBlur={end} />
+        <NumberField label="H" value={element.height} onChange={(v) => live({ height: Math.max(4, v) })} onBlur={end} />
       </Section>
 
       <Section title="Rotation & Opacity">
-        <NumberField label="Rotate" value={element.rotation ?? 0} onChange={(v) => up({ rotation: v })} suffix="°" />
+        <NumberField label="Rotate" value={element.rotation ?? 0} onChange={(v) => live({ rotation: v })} suffix="°" onBlur={end} />
         <label className="flex items-center gap-2">
           <span className="text-xs text-gray-500 w-14 shrink-0">Opacity</span>
           <input
@@ -299,7 +390,8 @@ function StyleTab({ element }: { element: DesignerElement }) {
             min={0}
             max={100}
             value={Math.round((element.opacity ?? 1) * 100)}
-            onChange={(e) => up({ opacity: Number(e.target.value) / 100 })}
+            onChange={(e) => live({ opacity: Number(e.target.value) / 100 })}
+            onBlur={end}
             className="flex-1 accent-blue-600"
           />
           <span className="text-xs text-gray-500 w-8 text-right">{Math.round((element.opacity ?? 1) * 100)}%</span>
@@ -311,14 +403,15 @@ function StyleTab({ element }: { element: DesignerElement }) {
           <ColorField
             label="Background"
             value={element.backgroundColor || 'transparent'}
-            onChange={(v) => up({ backgroundColor: v === '#ffffff' && !element.backgroundColor ? undefined : v })}
+            onChange={(v) => live({ backgroundColor: v === '#ffffff' && !element.backgroundColor ? undefined : v })}
+            onBlur={end}
           />
         )}
-        <NumberField label="Border" value={element.borderWidth ?? 0} onChange={(v) => up({ borderWidth: v })} min={0} />
+        <NumberField label="Border" value={element.borderWidth ?? 0} onChange={(v) => live({ borderWidth: v })} min={0} onBlur={end} />
         {element.borderWidth ? (
-          <ColorField label="Border clr" value={element.borderColor || '#d1d5db'} onChange={(v) => up({ borderColor: v })} />
+          <ColorField label="Border clr" value={element.borderColor || '#d1d5db'} onChange={(v) => live({ borderColor: v })} onBlur={end} />
         ) : null}
-        <NumberField label="Radius" value={element.borderRadius ?? 0} onChange={(v) => up({ borderRadius: v })} min={0} />
+        <NumberField label="Radius" value={element.borderRadius ?? 0} onChange={(v) => live({ borderRadius: v })} min={0} onBlur={end} />
         <SelectField
           label="Shadow"
           value={element.shadow || 'none'}
@@ -397,19 +490,21 @@ function StyleTab({ element }: { element: DesignerElement }) {
 
 // ─── Table tab ───
 function TableTab({ element }: { element: DesignerElement }) {
-  const { updateElement } = useDesigner();
+  const { updateElement, updateElements } = useDesigner();
+  const { live: liveApply, once, end } = useCoalescedHistory();
   const table = element.table;
-  const up = (patch: Partial<DesignerElement>) => updateElement(element.id, patch);
+  const live = (patch: Partial<DesignerElement>) => liveApply(() => updateElements([{ id: element.id, patch }]));
+  const up = (patch: Partial<DesignerElement>) => once(() => updateElement(element.id, patch)); // one-shot → own undo step
 
   if (!table) return null;
 
-  const setCells = (cells: typeof table.cells) => up({ table: { ...table, cells } });
-
-  const addRow = () => {
-    const cells = [...table.cells, Array.from({ length: table.columns }, () => ({ id: uid('cell'), content: '' }))];
-    setCells(cells);
-    up({ table: { ...table, cells, rows: cells.length } });
+  /** Resize rows/cols (live, coalesced) — powers the Rows/Cols fields. */
+  const setSize = (rows: number, cols: number) => {
+    const next = resizeTable(table, rows, cols);
+    if (next !== table) live({ table: next });
   };
+
+  const addRow = () => up({ table: resizeTable(table, table.cells.length + 1, table.columns) });
   const deleteRow = (r: number) => {
     if (table.cells.length <= 1) return;
     const cells = table.cells.filter((_, i) => i !== r);
@@ -435,15 +530,15 @@ function TableTab({ element }: { element: DesignerElement }) {
     const cells = table.cells.map((row, ri) =>
       ri === r ? row.map((cell, ci) => (ci === c ? { ...cell, content } : cell)) : row
     );
-    setCells(cells);
+    live({ table: { ...table, cells } });
   };
 
   return (
     <div>
       <Section title="Table Structure">
         <div className="grid grid-cols-2 gap-2">
-          <NumberField label="Rows" value={table.cells.length} onChange={() => {}} />
-          <NumberField label="Cols" value={table.columns} onChange={() => {}} />
+          <NumberField label="Rows" value={table.cells.length} onChange={(v) => setSize(v, table.columns)} min={1} onBlur={end} />
+          <NumberField label="Cols" value={table.columns} onChange={(v) => setSize(table.cells.length, v)} min={1} onBlur={end} />
         </div>
         <div className="flex gap-2 pt-1">
           <button onClick={addRow} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-gray-50">
@@ -466,6 +561,7 @@ function TableTab({ element }: { element: DesignerElement }) {
                       <input
                         value={cell.content}
                         onChange={(e) => setCell(r, c, e.target.value)}
+                        onBlur={end}
                         className="w-full min-w-[40px] px-1 py-1 text-[10px] bg-transparent focus:outline-none focus:bg-blue-50"
                       />
                       {c === 0 && (
@@ -540,7 +636,7 @@ function TableTab({ element }: { element: DesignerElement }) {
             {table.borders ? 'On' : 'Off'}
           </button>
         </div>
-        <NumberField label="Padding" value={table.cellPadding} onChange={(v) => up({ table: { ...table, cellPadding: v } })} min={0} />
+        <NumberField label="Padding" value={table.cellPadding} onChange={(v) => live({ table: { ...table, cellPadding: v } })} min={0} onBlur={end} />
       </Section>
     </div>
   );
@@ -580,15 +676,17 @@ function PageSettingsPanel() {
   const {
     activePage,
     document,
-    updatePageSettings,
     addPage,
     duplicatePage,
     deletePage,
     setActivePage,
+    dispatch,
   } = useDesigner();
+  const { live: liveApply, once, end } = useCoalescedHistory();
   if (!activePage) return null;
   const s = activePage.settings;
-  const up = (patch: Partial<typeof s>) => updatePageSettings(activePage.id, patch);
+  const live = (patch: Partial<typeof s>) =>
+    liveApply(() => dispatch({ type: 'UPDATE_PAGE_SETTINGS_LIVE', pageId: activePage.id, patch }));
 
   return (
     <div>
@@ -596,25 +694,25 @@ function PageSettingsPanel() {
         <SelectField
           label="Page"
           value={activePage.id}
-          onChange={(v) => setActivePage(v)}
+          onChange={(v) => once(() => setActivePage(v))}
           options={document.pages.map((p, i) => ({ value: p.id, label: `${i + 1}. ${p.name}` }))}
         />
         <div className="flex gap-2 pt-1">
           <button
-            onClick={addPage}
+            onClick={() => once(() => addPage())}
             className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
           >
             <Plus className="w-3 h-3" /> Add
           </button>
           <button
-            onClick={() => duplicatePage(activePage.id)}
+            onClick={() => once(() => duplicatePage(activePage.id))}
             className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
           >
             <Copy className="w-3 h-3" /> Duplicate
           </button>
           {document.pages.length > 1 && (
             <button
-              onClick={() => deletePage(activePage.id)}
+              onClick={() => once(() => deletePage(activePage.id))}
               className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-red-200 text-red-500 text-xs hover:bg-red-50"
             >
               <Trash2 className="w-3 h-3" /> Delete
@@ -623,13 +721,13 @@ function PageSettingsPanel() {
         </div>
       </Section>
       <Section title="Margins">
-        <NumberField label="Top" value={s.marginTop} onChange={(v) => up({ marginTop: v })} min={0} suffix="px" />
-        <NumberField label="Bottom" value={s.marginBottom} onChange={(v) => up({ marginBottom: v })} min={0} suffix="px" />
-        <NumberField label="Left" value={s.marginLeft} onChange={(v) => up({ marginLeft: v })} min={0} suffix="px" />
-        <NumberField label="Right" value={s.marginRight} onChange={(v) => up({ marginRight: v })} min={0} suffix="px" />
+        <NumberField label="Top" value={s.marginTop} onChange={(v) => live({ marginTop: v })} min={0} suffix="px" onBlur={end} />
+        <NumberField label="Bottom" value={s.marginBottom} onChange={(v) => live({ marginBottom: v })} min={0} suffix="px" onBlur={end} />
+        <NumberField label="Left" value={s.marginLeft} onChange={(v) => live({ marginLeft: v })} min={0} suffix="px" onBlur={end} />
+        <NumberField label="Right" value={s.marginRight} onChange={(v) => live({ marginRight: v })} min={0} suffix="px" onBlur={end} />
       </Section>
       <Section title="Page Background">
-        <ColorField label="Color" value={s.backgroundColor} onChange={(v) => up({ backgroundColor: v })} />
+        <ColorField label="Color" value={s.backgroundColor} onChange={(v) => live({ backgroundColor: v })} onBlur={end} />
       </Section>
       <div className="p-4">
         <p className="text-[10px] text-gray-400">

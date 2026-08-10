@@ -221,15 +221,19 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
             y: snap(o.y + dy, GRID, gridVisible),
           },
         }));
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) st.changed = true;
+        if (!st.changed && (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5)) {
+          // Capture the pre-gesture state as the single undo point BEFORE the
+          // first no-history update — UNDO then reverts the whole drag in one
+          // step (committing at release would make the first undo a no-op).
+          st.changed = true;
+          dispatch({ type: 'COMMIT_HISTORY' });
+        }
         updateElements(patches);
       };
       const upHandler = () => {
-        const st = dragState.current;
         window.removeEventListener('pointermove', moveHandler);
         window.removeEventListener('pointerup', upHandler);
         dragState.current = null;
-        if (st?.changed) dispatch({ type: 'COMMIT_HISTORY' });
       };
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
@@ -253,8 +257,12 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
         const dx = (ev.clientX - st.startX) / zoom;
         const dy = (ev.clientY - st.startY) / zoom;
         const o = st.origins[0];
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) st.changed = true;
-        // No history per move; COMMIT_HISTORY records a single undo step on release.
+        if (!st.changed && (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5)) {
+          // Single undo point captured before the first no-history update.
+          st.changed = true;
+          dispatch({ type: 'COMMIT_HISTORY' });
+        }
+        // No history per move; UNDO reverts the whole resize in one step.
         updateElements([
           {
             id: o.id,
@@ -266,11 +274,9 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
         ]);
       };
       const upHandler = () => {
-        const st = dragState.current;
         window.removeEventListener('pointermove', moveHandler);
         window.removeEventListener('pointerup', upHandler);
         dragState.current = null;
-        if (st?.changed) dispatch({ type: 'COMMIT_HISTORY' });
       };
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
@@ -300,17 +306,19 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
         const px = (ev.clientX - rect.left) / zoom;
         const py = (ev.clientY - rect.top) / zoom;
         const deg = (Math.atan2(py - st.center.y, px - st.center.x) * 180) / Math.PI + 90;
-        if (st.lastAngle !== undefined && Math.abs(deg - st.lastAngle) > 1) st.changed = true;
+        if (!st.changed && st.lastAngle !== undefined && Math.abs(deg - st.lastAngle) > 1) {
+          // Single undo point captured before the first no-history update.
+          st.changed = true;
+          dispatch({ type: 'COMMIT_HISTORY' });
+        }
         st.lastAngle = deg;
-        // No history per move; COMMIT_HISTORY records a single undo step on release.
+        // No history per move; UNDO reverts the whole rotation in one step.
         updateElements([{ id: st.origins[0].id, patch: { rotation: Math.round(deg) } }]);
       };
       const upHandler = () => {
-        const st = dragState.current;
         window.removeEventListener('pointermove', moveHandler);
         window.removeEventListener('pointerup', upHandler);
         dragState.current = null;
-        if (st?.changed) dispatch({ type: 'COMMIT_HISTORY' });
       };
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
