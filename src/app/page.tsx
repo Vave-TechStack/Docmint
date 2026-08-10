@@ -35,7 +35,7 @@ export default function Home() {
       {/* ─── Hero Section ─── */}
       <section className="relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-purple-50">
         <div className="absolute inset-0 bg-grid-pattern opacity-5 pointer-events-none" />
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 md:pt-24 pb-20 md:pb-32">
           <div className="text-center max-w-4xl mx-auto">
             <Badge variant="premium" size="lg" className="mb-6">
               <Sparkles className="w-4 h-4 mr-1" />
