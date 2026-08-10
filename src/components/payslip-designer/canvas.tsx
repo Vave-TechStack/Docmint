@@ -20,6 +20,7 @@ import {
   Ungroup,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { QRCodeCanvas } from 'qrcode.react';
 import { PALETTE_LOOKUP } from './palette';
 import { createElementFromPalette, uid } from './element-factory';
 import { useDesigner } from './store-context';
@@ -710,17 +711,21 @@ function ElementContent({ element }: { element: DesignerElement }) {
           <span style={{ fontSize: Math.min(element.width, element.height) * 0.7 }}>▪</span>
         </div>
       );
-    case 'qr':
+    case 'qr': {
+      // Inline QRCodeCanvas — no external API, works offline.
+      const size = Math.max(32, Math.floor(Math.min(element.width, element.height)));
       return (
         <div className="w-full h-full flex items-center justify-center bg-white p-0.5">
-          {/* eslint-disable-next-line @next/next/no-img-element -- QR image */}
-          <img
-            src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(element.qrValue || 'docmint')}`}
-            alt="QR"
-            className="w-full h-full object-contain"
+          <QRCodeCanvas
+            value={element.qrValue || 'https://docmint.app'}
+            size={size}
+            bgColor="#ffffff"
+            fgColor="#000000"
+            marginSize={1}
           />
         </div>
       );
+    }
     default:
       return null;
   }

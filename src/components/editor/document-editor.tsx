@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 import { ALLOWED_IMAGE_TYPES_ACCEPT, SYSTEM_PLACEHOLDERS } from '@/lib/utils/constants';
 import { validateImageUpload } from '@/lib/utils/image-upload';
+import { renderQrDataUrl } from '@/components/payslip-designer/export-html';
 import { computePagination, computePageInfo } from '@/lib/utils/pagination';
 import type { PageInfo, PaginationBlock } from '@/lib/utils/pagination';
 
@@ -212,12 +213,19 @@ export function DocumentEditor({ content = '', onChange, readOnly = false }: Doc
     [editor]
   );
 
-  const insertQRCode = useCallback(() => {
+  const insertQRCode = useCallback(async () => {
     if (!editor || !qrData) return;
-    const qrHtml = `<div style="text-align:center;padding:10px;"><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrData)}" alt="QR Code" style="max-width:150px;" /></div>`;
-    editor.chain().focus().insertContent(qrHtml).run();
     setShowQRModal(false);
+    const value = qrData;
     setQrData('');
+    // Render the QR client-side to an inline data URL (no external API).
+    const dataUrl = await renderQrDataUrl(value, 150);
+    if (!dataUrl) {
+      toast.error('Could not generate QR code');
+      return;
+    }
+    const qrHtml = `<div style="text-align:center;padding:10px;"><img src="${dataUrl}" alt="QR Code" style="max-width:150px;" /></div>`;
+    editor.chain().focus().insertContent(qrHtml).run();
   }, [editor, qrData]);
 
   const insertTable = useCallback(() => {

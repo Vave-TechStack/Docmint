@@ -69,6 +69,40 @@ function makeDocument(page: DesignerPage): DesignerDocument {
   return { version: 1, name: 'Test', pages: [page] };
 }
 
+function makeQrElement(value: string): DesignerElement {
+  return {
+    id: 'qr1',
+    type: 'qr',
+    name: 'QR',
+    x: 0,
+    y: 0,
+    width: 120,
+    height: 120,
+    rotation: 0,
+    opacity: 1,
+    zIndex: 1,
+    locked: false,
+    visible: true,
+    qrValue: value,
+    binding: { kind: 'plain' },
+    fontFamily: 'Inter',
+    fontSize: 11,
+    fontWeight: 400,
+    fontStyle: 'normal',
+    textDecoration: 'none',
+    textAlign: 'left',
+    color: '#1f2937',
+    lineHeight: 1.3,
+    letterSpacing: 0,
+    backgroundColor: undefined,
+    borderRadius: 0,
+    borderWidth: 0,
+    borderColor: '#d1d5db',
+    shadow: 'none',
+    align: 'middle',
+  };
+}
+
 function makeImageElement(imageSrc: string): DesignerElement {
   return {
     id: 'img1',
@@ -178,7 +212,7 @@ describe('resolveTokens', () => {
 });
 
 describe('exportDesignHtml CSS injection defense', () => {
-  it('neutralizes hostile style values while keeping valid ones', () => {
+  it('neutralizes hostile style values while keeping valid ones', async () => {
     // Hostile values arrive via untrusted JSON (strings, junk), so build the
     // element as raw data to simulate a tampered design.
     const element = makeTextElement({
@@ -192,7 +226,7 @@ describe('exportDesignHtml CSS injection defense', () => {
       opacity: 900,
       rotation: '90',
     } as unknown as Partial<DesignerElement>);
-    const html = exportDesignHtml(makeDocument(makePage([element])));
+    const html = await exportDesignHtml(makeDocument(makePage([element])));
 
     // Hostile CSS never reaches the output…
     expect(html).not.toContain('position:fixed');
@@ -209,25 +243,38 @@ describe('exportDesignHtml CSS injection defense', () => {
     expect(html).toContain('font-size:11px'); // invalid "abc" -> default
   });
 
-  it('never renders javascript: image sources', () => {
-    const html = exportDesignHtml(makeDocument(makePage([makeImageElement('javascript:alert(1)')])));
+  it('never renders javascript: image sources', async () => {
+    const html = await exportDesignHtml(makeDocument(makePage([makeImageElement('javascript:alert(1)')])));
     expect(html).not.toMatch(/<img[^>]*src="javascript:/);
   });
 
-  it('keeps safe image sources', () => {
-    const html = exportDesignHtml(makeDocument(makePage([makeImageElement('https://example.com/logo.png')])));
+  it('keeps safe image sources', async () => {
+    const html = await exportDesignHtml(makeDocument(makePage([makeImageElement('https://example.com/logo.png')])));
     expect(html).toContain('<img src="https://example.com/logo.png"');
   });
 
-  it('does not crash when header/footer element collections are not arrays', () => {
+  it('does not crash when header/footer element collections are not arrays', async () => {
     const page = makePage([]);
     page.settings.headerElements = 'oops' as unknown as typeof page.settings.headerElements;
     page.settings.footerElements = 42 as unknown as typeof page.settings.footerElements;
-    expect(() => exportDesignHtml(makeDocument(page))).not.toThrow();
-    expect(exportDesignHtml(makeDocument(page))).toContain('class="page"');
+    await expect(exportDesignHtml(makeDocument(page))).resolves.not.toThrow();
+    expect(await exportDesignHtml(makeDocument(page))).toContain('class="page"');
   });
 
-  it('keeps valid styling intact', () => {
+  it('renders QR codes without any external API', async () => {
+    const html = await exportDesignHtml(
+      makeDocument(makePage([makeQrElement('https://pay.example.com/EMP-1042')]))
+    );
+    // The external qrserver API is gone entirely…
+    expect(html).not.toContain('api.qrserver.com');
+    expect(html).not.toContain('create-qr-code');
+    // …and the QR marker carries the encoded value for inline embedding.
+    expect(html).toContain('class="docmint-qr"');
+    expect(html).toContain('data-qr-value=');
+    expect(html).toContain(encodeURIComponent('https://pay.example.com/EMP-1042'));
+  });
+
+  it('keeps valid styling intact', async () => {
     const element = makeTextElement({
       color: '#123ABC',
       fontSize: 22,
@@ -236,7 +283,7 @@ describe('exportDesignHtml CSS injection defense', () => {
       textAlign: 'center',
       lineHeight: 1.5,
     });
-    const html = exportDesignHtml(makeDocument(makePage([element])));
+    const html = await exportDesignHtml(makeDocument(makePage([element])));
 
     expect(html).toContain('color:#123abc');
     expect(html).toContain('font-size:22px');

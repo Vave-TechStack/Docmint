@@ -1,4 +1,7 @@
 import DOMPurify from 'dompurify';
+import { createElement, useEffect } from 'react';
+import { createRoot } from 'react-dom/client';
+import { QRCodeCanvas } from 'qrcode.react';
 import type {
   DesignerDocument,
   DesignerElement,
@@ -292,8 +295,8 @@ function renderQrElement(element: DesignerElement, page: PageSettings, values?: 
     `align-items:center`,
     `justify-content:center`,
   ].join(';');
-  const size = Math.round(safeNumber(Math.min(element.width, element.height) * 2, 120, 1, 2000));
-  return `<div style="${style}"><img src="https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(value)}" alt="QR" style="width:100%;height:100%;object-fit:contain" /></div>`;
+  // Marker replaced with an inline data-URL <img> by embedQrCodes (async).
+  return `<img class="docmint-qr" data-qr-value="${encodeURIComponent(value)}" alt="QR" style="${style};width:100%;height:100%;object-fit:contain" />`;
 }
 
 function renderElement(element: DesignerElement, page: PageSettings, values?: Record<string, string>): string {
@@ -343,10 +346,77 @@ function sanitizeHtml(html: string): string {
 }
 
 /**
+ * Renders qrcode.react's QRCodeCanvas and reports the painted PNG data URL.
+ * The canvas is read inside an effect — QRCodeCanvas paints in its own
+ * effect (child effects run before parent effects), so by the time this
+ * runs the QR is actually drawn. Reading the canvas in a ref callback would
+ * capture a blank canvas (refs attach before paint), and querying the host
+ * DOM avoids passing a ref to the component entirely.
+ */
+function QrDataUrlCapture({ value, size, onData, host }: { value: string; size: number; onData: (url: string) => void; host: HTMLElement }) {
+  useEffect(() => {
+    const canvas = host.querySelector('canvas');
+    onData(canvas?.toDataURL('image/png') ?? '');
+    // host/onData are stable per render — run once.
+  }, [host, onData]);
+  return createElement(QRCodeCanvas, {
+    value,
+    size,
+    bgColor: '#ffffff',
+    fgColor: '#000000',
+    marginSize: 1,
+  });
+}
+
+/**
+ * Render a QR code to an inline PNG data URL using qrcode.react's
+ * QRCodeCanvas — fully client-side, no network. Returns '' where there is
+ * no DOM (SSR/tests); callers fall back to a marker/placeholder then.
+ */
+export async function renderQrDataUrl(value: string, size: number): Promise<string> {
+  if (typeof document === 'undefined') return '';
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-9999px;top:0;width:0;height:0;overflow:hidden;';
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    return await new Promise<string>((resolve) => {
+      try {
+        root.render(createElement(QrDataUrlCapture, { value, size, onData: resolve, host }));
+      } catch {
+        resolve('');
+      }
+    });
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
+
+const QR_MARKER_RE = /data-qr-value="([^"]*)"/g;
+
+/** Replace every QR marker with an inline data-URL image (deduped per value). */
+async function embedQrCodes(html: string): Promise<string> {
+  const cache = new Map<string, string>();
+  for (const match of html.matchAll(QR_MARKER_RE)) {
+    const encoded = match[1];
+    if (cache.has(encoded)) continue;
+    const value = decodeURIComponent(encoded);
+    cache.set(encoded, await renderQrDataUrl(value, 256));
+  }
+  for (const [encoded, url] of cache) {
+    if (!url) continue; // no DOM (SSR/tests) — keep the marker for later embedding
+    html = html.replaceAll(`data-qr-value="${encoded}"`, `src="${url}"`);
+  }
+  return html;
+}
+
+/**
  * Full standalone A4 document (one .page div per designer page). Use for
  * preview iframes, window.print(), jsPDF doc.html() and DOCX export.
+ * QR codes are embedded as inline data URLs (no external API).
  */
-export function exportDesignHtml(document: DesignerDocument, values?: Record<string, string>): string {
+export async function exportDesignHtml(document: DesignerDocument, values?: Record<string, string>): Promise<string> {
   const pages = document.pages.map((p) => renderPageHtml(p, values)).join('\n');
   const html = `<!DOCTYPE html>
 <html>
@@ -369,5 +439,6 @@ export function exportDesignHtml(document: DesignerDocument, values?: Record<str
 ${pages}
 </body>
 </html>`;
-  return sanitizeHtml(html);
+  const withQr = await embedQrCodes(html);
+  return sanitizeHtml(withQr);
 }

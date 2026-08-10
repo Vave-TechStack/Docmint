@@ -53,7 +53,18 @@ export const SAMPLE_VALUES: Record<string, string> = {
 
 export function PreviewOverlay({ onClose }: { onClose: () => void }) {
   const { document } = useDesigner();
-  const html = React.useMemo(() => exportDesignHtml(document, SAMPLE_VALUES), [document]);
+  // exportDesignHtml is async (QR codes render to inline data URLs);
+  // regenerate the preview whenever the document changes.
+  const [html, setHtml] = React.useState('');
+  React.useEffect(() => {
+    let cancelled = false;
+    void exportDesignHtml(document, SAMPLE_VALUES).then((h) => {
+      if (!cancelled) setHtml(h);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [document]);
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-900/70 backdrop-blur-sm flex flex-col">

@@ -225,7 +225,7 @@ function DesignerWorkspace() {
         }));
 
         const body: Record<string, unknown> = {
-          htmlTemplate: exportDesignHtml(document),
+          htmlTemplate: await exportDesignHtml(document),
           content: { ...((document as unknown as { extra?: Record<string, unknown> }).extra || {}), payslipDesign: JSON.parse(designJson) },
         };
         // Only rename the template when the user explicitly wants it (the
@@ -286,7 +286,7 @@ function DesignerWorkspace() {
           body: JSON.stringify({
             name,
             description: 'Created in the Payslip Designer',
-            htmlTemplate: exportDesignHtml(document),
+            htmlTemplate: await exportDesignHtml(document),
             content: { payslipDesign: JSON.parse(JSON.stringify(document)) },
             category: 'Payroll',
             visibility: 'PRIVATE',
@@ -357,19 +357,23 @@ function DesignerWorkspace() {
         toast.success('Duplicated in the workspace');
       },
       onPreview: () => setShowPreviewOverlay(true),
-      onExportPdf: () => {
-        void exportPdf(exportDesignHtml(document, SAMPLE_VALUES), document.name).catch(() =>
-          toast.error('PDF export failed')
-        );
+      onExportPdf: async () => {
+        try {
+          await exportPdf(await exportDesignHtml(document, SAMPLE_VALUES), document.name);
+        } catch {
+          toast.error('PDF export failed');
+        }
       },
-      onExportDocx: () => {
-        void exportDocx(exportDesignHtml(document, SAMPLE_VALUES), document.name).catch(() =>
-          toast.error('DOCX export failed')
-        );
+      onExportDocx: async () => {
+        try {
+          await exportDocx(await exportDesignHtml(document, SAMPLE_VALUES), document.name);
+        } catch {
+          toast.error('DOCX export failed');
+        }
       },
-      onExportHtml: () => downloadHtml(exportDesignHtml(document, SAMPLE_VALUES), document.name),
+      onExportHtml: async () => downloadHtml(await exportDesignHtml(document, SAMPLE_VALUES), document.name),
       onExportJson: () => downloadDesignJson(document),
-      onPrint: () => printDesign(exportDesignHtml(document, SAMPLE_VALUES)),
+      onPrint: async () => printDesign(await exportDesignHtml(document, SAMPLE_VALUES)),
     }),
     [dispatch, document, handleOpenJson, handleSave, router]
   );

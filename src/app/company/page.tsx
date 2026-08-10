@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import toast from 'react-hot-toast';
+import { QRCodeCanvas } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
 import { ALLOWED_IMAGE_TYPES_ACCEPT } from '@/lib/utils/constants';
 import { validateImageUpload } from '@/lib/utils/image-upload';
@@ -512,13 +513,13 @@ export default function CompanyProfilePage() {
                     {renderInput('UPI ID', 'upiId', 'text', 'company@upi')}
                     {form.upiId && (
                       <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-                        <Image
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(form.upiId)}`}
-                          alt="UPI QR"
-                          width={80}
-                          height={80}
-                          unoptimized
-                          className="w-20 h-20 rounded-lg border border-gray-200"
+                        <QRCodeCanvas
+                          value={form.upiId}
+                          size={80}
+                          bgColor="#ffffff"
+                          fgColor="#000000"
+                          marginSize={1}
+                          className="w-20 h-20"
                         />
                         <div>
                           <p className="text-sm font-medium text-gray-900">UPI QR Code</p>
