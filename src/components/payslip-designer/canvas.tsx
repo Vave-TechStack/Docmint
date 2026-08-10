@@ -55,7 +55,17 @@ function elementCenter(e: DesignerElement) {
 function CanvasDropZone({ children, onDropAt }: { children: React.ReactNode; onDropAt: (x: number, y: number) => void }) {
   const { setNodeRef } = useDroppable({ id: 'canvas-drop' });
   return (
-    <div ref={setNodeRef} className="relative w-full h-full" onClick={() => onDropAt(-1, -1)}>
+    <div
+      ref={setNodeRef}
+      className="relative w-full h-full"
+      onClick={(e) => {
+        // Clicking an element (or its selection handles) already selects it in
+        // pointerdown — don't let the bubbling click deselect it again.
+        const target = e.target as HTMLElement;
+        if (target.closest('[data-element], [data-handle]')) return;
+        onDropAt(-1, -1);
+      }}
+    >
       {children}
     </div>
   );
@@ -70,7 +80,6 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
     groups,
     select,
     clearSelection,
-    updateElement,
     updateElements,
     deleteElements,
     duplicateElements,
@@ -240,10 +249,16 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
         const dy = (ev.clientY - st.startY) / zoom;
         const o = st.origins[0];
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) st.changed = true;
-        updateElement(o.id, {
-          width: snap(Math.max(MIN_SIZE, o.w + dx), GRID, gridVisible),
-          height: snap(Math.max(MIN_SIZE, o.h + dy), GRID, gridVisible),
-        });
+        // No history per move; COMMIT_HISTORY records a single undo step on release.
+        updateElements([
+          {
+            id: o.id,
+            patch: {
+              width: snap(Math.max(MIN_SIZE, o.w + dx), GRID, gridVisible),
+              height: snap(Math.max(MIN_SIZE, o.h + dy), GRID, gridVisible),
+            },
+          },
+        ]);
       };
       const upHandler = () => {
         const st = dragState.current;
@@ -255,7 +270,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
     },
-    [dispatch, gridVisible, updateElement, zoom]
+    [dispatch, gridVisible, updateElements, zoom]
   );
 
   const handleRotatePointerDown = useCallback(
@@ -273,11 +288,6 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       const moveHandler = (ev: PointerEvent) => {
         const st = dragState.current;
         if (!st || st.mode !== 'rotate' || !st.center) return;
-        const dx = ev.clientX - e.clientX;
-        const dy = ev.clientY - e.clientY;
-        const angle = Math.atan2(st.center.y + dy / zoom - st.center.y, st.center.x + dx / zoom - st.center.x);
-        void angle;
-        // simpler: base angle from center to pointer
         const pageEl = (e.target as HTMLElement).closest('[data-page-body]') as HTMLElement;
         if (!pageEl) return;
         const rect = pageEl.getBoundingClientRect();
@@ -286,7 +296,8 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
         const deg = (Math.atan2(py - st.center.y, px - st.center.x) * 180) / Math.PI + 90;
         if (st.lastAngle !== undefined && Math.abs(deg - st.lastAngle) > 1) st.changed = true;
         st.lastAngle = deg;
-        updateElement(st.origins[0].id, { rotation: Math.round(deg) });
+        // No history per move; COMMIT_HISTORY records a single undo step on release.
+        updateElements([{ id: st.origins[0].id, patch: { rotation: Math.round(deg) } }]);
       };
       const upHandler = () => {
         const st = dragState.current;
@@ -298,7 +309,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
     },
-    [dispatch, updateElement, zoom]
+    [dispatch, updateElements, zoom]
   );
 
   // ─── marquee + pan on canvas background ───
