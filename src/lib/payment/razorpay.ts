@@ -1,5 +1,9 @@
 import type { RazorpayOrderResponse } from '@/types';
-import { INSTANT_DOWNLOAD_PRICE } from '@/lib/utils/constants';
+import {
+  INSTANT_DOWNLOAD_PRICE,
+  PREMIUM_PRICE,
+  ANNUAL_PREMIUM_PRICE,
+} from '@/lib/utils/constants';
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID!;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET!;
@@ -12,8 +16,10 @@ export class PaymentService {
   // Minimum amount for instant download in paise. Derived from the INR price
   // constant so the server-side floor can never drift from the published price.
   static readonly MIN_INSTANT_AMOUNT = INSTANT_DOWNLOAD_PRICE * 100;
-  static readonly SUBSCRIPTION_AMOUNT = 29900; // ₹299 in paise (monthly)
-  static readonly ANNUAL_SUBSCRIPTION_AMOUNT = 287000; // ₹2,870 in paise (annual, 20% off)
+  // Subscription amounts in paise, derived from the INR price constants so the
+  // accepted values can never drift from the published prices.
+  static readonly SUBSCRIPTION_AMOUNT = PREMIUM_PRICE * 100; // ₹299/mo
+  static readonly ANNUAL_SUBSCRIPTION_AMOUNT = ANNUAL_PREMIUM_PRICE * 100; // ₹2,870/yr
 
   private static getAuthHeaders(): Record<string, string> {
     const credentials = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString('base64');
@@ -33,6 +39,22 @@ export class PaymentService {
     const fallback = INSTANT_DOWNLOAD_PRICE * 100;
     const requested = clientAmount || fallback;
     return Math.max(requested, this.MIN_INSTANT_AMOUNT);
+  }
+
+  /**
+   * Resolve the actual order amount (in paise) for a subscription.
+   * Pure and server-side: never trusts the client. Only the exact published
+   * monthly (₹299) and annual (₹2,870) amounts are accepted; anything else
+   * falls back to the monthly amount so the client cannot force a custom price.
+   */
+  static resolveSubscriptionAmount(clientAmount?: number): number {
+    if (
+      clientAmount === this.SUBSCRIPTION_AMOUNT ||
+      clientAmount === this.ANNUAL_SUBSCRIPTION_AMOUNT
+    ) {
+      return clientAmount;
+    }
+    return this.SUBSCRIPTION_AMOUNT;
   }
 
   /**

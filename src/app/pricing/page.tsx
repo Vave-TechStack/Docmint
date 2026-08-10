@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { RazorpayCheckout } from '@/components/razorpay-checkout';
 import { ErrorBoundary, PaymentFallback } from '@/components/ui/error-boundary';
+import { PREMIUM_PRICE, ANNUAL_PREMIUM_PRICE } from '@/lib/utils/constants';
 import toast from 'react-hot-toast';
 import {
   CheckCircle2,
@@ -238,7 +239,7 @@ export default function PricingPage() {
                   <div className="mb-8">
                     <ErrorBoundary fallback={(retry) => <PaymentFallback onRetry={retry} />}>
                       <RazorpayCheckout
-                        amount={annual ? 287000 : 29900}
+                        amount={annual ? ANNUAL_PREMIUM_PRICE * 100 : PREMIUM_PRICE * 100}
                         type="subscription"
                         description={annual ? 'DocMint Premium - 1 Year' : 'DocMint Premium - 30 Days'}
                         label={annual ? 'Subscribe Now — ₹2,870/yr' : 'Subscribe Now — ₹299/mo'}

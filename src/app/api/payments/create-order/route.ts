@@ -20,9 +20,9 @@ export async function POST(request: NextRequest) {
     let receipt: string;
 
     if (type === 'subscription') {
-      // Allow both monthly (₹299) and annual (₹2,870) amounts
-      const validAmounts = [PaymentService.SUBSCRIPTION_AMOUNT, PaymentService.ANNUAL_SUBSCRIPTION_AMOUNT];
-      orderAmount = validAmounts.includes(amount) ? amount : PaymentService.SUBSCRIPTION_AMOUNT;
+      // Server-side: only the published monthly (₹299) and annual (₹2,870)
+      // amounts are accepted; anything else falls back to monthly.
+      orderAmount = PaymentService.resolveSubscriptionAmount(amount);
       receipt = `sub_${Date.now()}`;
     } else if (type === 'instant') {
       // Server-side: fallback to the published price and clamp to the minimum
