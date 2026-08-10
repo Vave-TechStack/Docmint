@@ -243,10 +243,19 @@ export function designerReducer(state: DesignerStore, action: DesignerAction): D
       const pageId = action.pageId ?? state.activePageId;
       const elements = pageElements(state.document, pageId);
       const sorted = [...elements].sort((a, b) => a.zIndex - b.zIndex);
-      let min = sorted[0] ? sorted[0].zIndex - 1 : 0;
-      const next = sorted.map((e) =>
-        action.ids.includes(e.id) ? { ...e, zIndex: --min } : e
-      );
+      // Assign new z values to the selected elements in DESCENDING z-order
+      // (highest first) so their relative stacking is preserved — the old
+      // --min loop reversed the order of multi-element selections.
+      const selected = [...elements]
+        .filter((e) => action.ids.includes(e.id))
+        .sort((a, b) => b.zIndex - a.zIndex);
+      let nextZ = sorted[0] ? sorted[0].zIndex - 1 : 0;
+      const zById = new Map<string, number>();
+      for (const e of selected) zById.set(e.id, nextZ--);
+      const next = elements.map((e) => {
+        const z = zById.get(e.id);
+        return z === undefined ? e : { ...e, zIndex: z };
+      });
       return pushHistory(state, {
         ...snapshotOf(state),
         document: {
@@ -321,6 +330,17 @@ export function designerReducer(state: DesignerStore, action: DesignerAction): D
       copy.id = uid('page');
       copy.name = `${source.name} (copy)`;
       copy.elements = cloneWithNewIds(copy.elements, 24);
+      // Regenerate IDs for header/footer elements too — otherwise the copy
+      // shares element IDs with the source page.
+      copy.settings = {
+        ...copy.settings,
+        headerElements: Array.isArray(copy.settings.headerElements)
+          ? cloneWithNewIds(copy.settings.headerElements, 24)
+          : copy.settings.headerElements,
+        footerElements: Array.isArray(copy.settings.footerElements)
+          ? cloneWithNewIds(copy.settings.footerElements, 24)
+          : copy.settings.footerElements,
+      };
       const pages = [...state.document.pages];
       pages.splice(pages.indexOf(source) + 1, 0, copy);
       return pushHistory(state, {
