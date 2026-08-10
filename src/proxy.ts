@@ -2,12 +2,12 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 /**
- * DocMint Edge Middleware
+ * DocMint Edge Proxy
  * Handles security headers, multi-tenant routing, and public route detection.
  * NOTE: Auth checks are handled by individual pages and API routes.
- * This middleware runs on Edge Runtime and cannot import Node.js modules (Prisma, bcrypt, etc.).
+ * This proxy runs on the Edge Runtime and cannot import Node.js modules (Prisma, bcrypt, etc.).
  */
-export default function middleware(req: NextRequest) {
+export default function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const response = NextResponse.next();
 
