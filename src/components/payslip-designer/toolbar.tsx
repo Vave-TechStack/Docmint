@@ -134,8 +134,8 @@ export function DesignerToolbar({
       <Divider />
 
       {/* History */}
-      <ToolbarButton icon={Undo2} onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)" />
-      <ToolbarButton icon={Redo2} onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" />
+      <ToolbarButton icon={Undo2} onClick={undo} disabled={!canUndo || previewMode} title="Undo (Ctrl+Z)" />
+      <ToolbarButton icon={Redo2} onClick={redo} disabled={!canRedo || previewMode} title="Redo (Ctrl+Shift+Z)" />
 
       <Divider />
 

@@ -14,11 +14,12 @@ import { createElementFromPalette } from './element-factory';
 import { useDesigner } from './store-context';
 import type { PaletteComponent } from './types';
 
-function PaletteItem({ component }: { component: PaletteComponent }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: component.id });
+function PaletteItem({ component, readOnly }: { component: PaletteComponent; readOnly: boolean }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: component.id, disabled: readOnly });
   const { activePage, dispatch } = useDesigner();
   const movedRef = React.useRef({ moved: false, x: 0, y: 0 });
   const addByClick = () => {
+    if (readOnly) return;
     if (movedRef.current.moved) {
       movedRef.current.moved = false;
       return;
@@ -46,12 +47,16 @@ function PaletteItem({ component }: { component: PaletteComponent }) {
         const m = movedRef.current;
         if (!m.moved && Math.hypot(e.clientX - m.x, e.clientY - m.y) > 5) m.moved = true;
       }}
-      className={`flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs transition-colors cursor-grab active:cursor-grabbing select-none ${
-        isDragging
-          ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
-          : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300 hover:bg-blue-50/50'
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs transition-colors select-none ${
+        readOnly
+          ? 'opacity-60 cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400'
+          : `cursor-grab active:cursor-grabbing ${
+              isDragging
+                ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300 hover:bg-blue-50/50'
+            }`
       }`}
-      title="Drag onto the canvas, or click to add"
+      title={readOnly ? 'Preview mode — components are read-only' : 'Drag onto the canvas, or click to add'}
     >
       <MousePointerClick className="w-3 h-3 text-gray-400 shrink-0" />
       <span className="truncate">{component.label}</span>
@@ -59,7 +64,7 @@ function PaletteItem({ component }: { component: PaletteComponent }) {
   );
 }
 
-function PaletteCategoryBlock({ label, components }: { label: string; components: PaletteComponent[] }) {
+function PaletteCategoryBlock({ label, components, readOnly }: { label: string; components: PaletteComponent[]; readOnly: boolean }) {
   const [open, setOpen] = useState(true);
   return (
     <div>
@@ -74,7 +79,7 @@ function PaletteCategoryBlock({ label, components }: { label: string; components
       {open && (
         <div className="grid grid-cols-1 gap-1.5 pl-5 pb-2">
           {components.map((c) => (
-            <PaletteItem key={c.id} component={c} />
+            <PaletteItem key={c.id} component={c} readOnly={readOnly} />
           ))}
         </div>
       )}
@@ -82,7 +87,7 @@ function PaletteCategoryBlock({ label, components }: { label: string; components
   );
 }
 
-function VariablesPanel() {
+function VariablesPanel({ readOnly }: { readOnly: boolean }) {
   const { selection, activePage, updateElement, dispatch } = useDesigner();
 
   const selectedText = useMemo(() => {
@@ -93,6 +98,7 @@ function VariablesPanel() {
 
   const insertIntoSelection = useCallback(
     (key: string) => {
+      if (readOnly) return; // Preview mode: read-only.
       if (selectedText) {
         const token = `{{${key}}}`;
         updateElement(selectedText.id, {
@@ -114,7 +120,7 @@ function VariablesPanel() {
         dispatch({ type: 'ADD_ELEMENT', element });
       }
     },
-    [activePage, dispatch, selectedText, updateElement]
+    [activePage, dispatch, readOnly, selectedText, updateElement]
   );
 
   return (
@@ -136,8 +142,9 @@ function VariablesPanel() {
               <button
                 key={v.key}
                 onClick={() => insertIntoSelection(v.key)}
-                className="flex items-center justify-between gap-2 px-2 py-1 rounded-md border border-gray-100 bg-gray-50 hover:border-blue-300 hover:bg-blue-50 text-left transition-colors"
-                title={`Insert {{${v.key}}}`}
+                disabled={readOnly}
+                className="flex items-center justify-between gap-2 px-2 py-1 rounded-md border border-gray-100 bg-gray-50 text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:border-blue-300 hover:bg-blue-50"
+                title={readOnly ? 'Preview mode — variables are read-only' : `Insert {{${v.key}}}`}
               >
                 <span className="text-xs text-gray-600 truncate">{v.label}</span>
                 <code className="text-[9px] text-blue-600 font-mono shrink-0">{`{{${v.key}}}`}</code>
@@ -150,7 +157,7 @@ function VariablesPanel() {
   );
 }
 
-export function DesignerLeftSidebar() {
+export function DesignerLeftSidebar({ readOnly = false }: { readOnly?: boolean }) {
   const [tab, setTab] = useState<'components' | 'variables'>('components');
   return (
     <aside className="w-64 shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
@@ -179,11 +186,11 @@ export function DesignerLeftSidebar() {
             Drag a component onto the canvas, or click to add it.
           </p>
           {PALETTE_CATEGORIES.map((cat) => (
-            <PaletteCategoryBlock key={cat.id} label={cat.label} components={cat.components} />
+            <PaletteCategoryBlock key={cat.id} label={cat.label} components={cat.components} readOnly={readOnly} />
           ))}
         </div>
       ) : (
-        <VariablesPanel />
+        <VariablesPanel readOnly={readOnly} />
       )}
     </aside>
   );

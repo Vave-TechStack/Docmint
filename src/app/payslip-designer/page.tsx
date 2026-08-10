@@ -383,6 +383,7 @@ function DesignerWorkspace() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (previewMode) return; // Preview mode: read-only.
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -400,7 +401,7 @@ function DesignerWorkspace() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('designer-zoom', onZoom);
     };
-  }, [undo, redo]);
+  }, [previewMode, undo, redo]);
 
   if (loadingDesign || (authStatus === 'loading' && !templateIdFromUrl)) {
     return (
@@ -427,7 +428,7 @@ function DesignerWorkspace() {
       />
 
       <div className="flex-1 flex overflow-hidden">
-        <DesignerLeftSidebar />
+        <DesignerLeftSidebar readOnly={previewMode} />
 
         <div className="flex-1 min-w-0 flex flex-col">
           {/* zoom strip */}
@@ -436,14 +437,16 @@ function DesignerWorkspace() {
               {zoomLabel} · {gridVisible ? 'Grid on' : 'Grid off'} · {previewMode ? 'Preview mode' : 'Edit mode'}
             </span>
             <span className="hidden md:block">
-              Drag from the left panel · Click to select · Shift+click multi-select · Ctrl+wheel zoom · Ctrl+Z undo
+              {previewMode
+                ? 'Preview mode — editing is locked · Drag or scroll to pan · Ctrl+wheel zoom'
+                : 'Drag from the left panel · Click to select · Shift+click multi-select · Ctrl+wheel zoom · Ctrl+Z undo'}
             </span>
           </div>
 
           <DesignerCanvas zoom={zoom} gridVisible={gridVisible && !previewMode} panMode={previewMode} />
         </div>
 
-        <PropertiesPanel />
+        {!previewMode && <PropertiesPanel />}
       </div>
 
       {showPreviewOverlay && <PreviewOverlay onClose={() => setShowPreviewOverlay(false)} />}

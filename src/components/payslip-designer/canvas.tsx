@@ -143,6 +143,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
     (event: DragEndEvent) => {
       const component = PALETTE_LOOKUP[String(event.active.id)];
       setDragging(null);
+      if (panMode) return; // Preview mode: palette drops are read-only.
       if (!component || event.over?.id !== 'canvas-drop') return;
       const pageEl = contentRef.current?.querySelector('[data-page-body]') as HTMLElement | null;
       if (!pageEl) return;
@@ -165,12 +166,13 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       );
       dispatch({ type: 'ADD_ELEMENT', element });
     },
-    [activePage, dispatch, gridVisible, pageBodySize, visibleElements.length, zoom]
+    [activePage, dispatch, gridVisible, pageBodySize, panMode, visibleElements.length, zoom]
   );
 
   // ─── element interactions (pointer-based) ───
   const handleElementPointerDown = useCallback(
     (e: React.PointerEvent, element: DesignerElement) => {
+      if (panMode) return; // Preview mode: read-only — drags pan instead.
       if (e.button === 2) return;
       const alreadySelected = selection.includes(element.id);
 
@@ -232,11 +234,12 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
     },
-    [clearSelection, dispatch, gridVisible, groups, select, selection, updateElements, visibleElements, zoom]
+    [clearSelection, dispatch, gridVisible, groups, panMode, select, selection, updateElements, visibleElements, zoom]
   );
 
   const handleResizePointerDown = useCallback(
     (e: React.PointerEvent, element: DesignerElement) => {
+      if (panMode) return; // Preview mode: read-only.
       e.stopPropagation();
       dragState.current = {
         mode: 'resize',
@@ -272,11 +275,12 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
     },
-    [dispatch, gridVisible, updateElements, zoom]
+    [dispatch, gridVisible, panMode, updateElements, zoom]
   );
 
   const handleRotatePointerDown = useCallback(
     (e: React.PointerEvent, element: DesignerElement) => {
+      if (panMode) return; // Preview mode: read-only.
       e.stopPropagation();
       const center = elementCenter(element);
       dragState.current = {
@@ -311,14 +315,15 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       window.addEventListener('pointermove', moveHandler);
       window.addEventListener('pointerup', upHandler);
     },
-    [dispatch, updateElements, zoom]
+    [dispatch, panMode, updateElements, zoom]
   );
 
   // ─── marquee + pan on canvas background ───
   const handleCanvasPointerDown = useCallback(
     (e: React.PointerEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest('[data-element]') || target.closest('[data-handle]')) return;
+      // In preview mode even drags that start on an element should pan.
+      if (!panMode && (target.closest('[data-element]') || target.closest('[data-handle]'))) return;
       if (e.button === 1 || (e.button === 0 && panMode)) {
         setPanning(true);
         panStart.current = { x: e.clientX, y: e.clientY, sx: viewportRef.current?.scrollLeft ?? 0, sy: viewportRef.current?.scrollTop ?? 0 };
@@ -407,6 +412,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
         }
       }
       if (mod && e.key.toLowerCase() === 'v') {
+        if (panMode) return; // Preview mode: read-only (copy still works).
         if (!clipboardRef.current?.length) return;
         e.preventDefault();
         const clones = clipboardRef.current.map((el) => {
@@ -426,7 +432,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activePage, dispatch, groups, selection]);
+  }, [activePage, dispatch, groups, panMode, selection]);
 
   // ctrl/cmd + wheel zoom
   useEffect(() => {
@@ -447,6 +453,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (panMode) return; // Preview mode: read-only.
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         deleteElements();
@@ -467,7 +474,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clearSelection, deleteElements, dispatch, duplicateElements, groupSelection]);
+  }, [clearSelection, deleteElements, dispatch, duplicateElements, groupSelection, panMode]);
 
   const selectedGroup = useMemo(
     () => groups.find((g) => selection.length === 1 && selection[0] === g.id),
@@ -505,12 +512,14 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
                 {idx + 1} · {page.name}
               </button>
             ))}
-            <button
-              onClick={addPage}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
-            >
-              + Add
-            </button>
+            {!panMode && (
+              <button
+                onClick={addPage}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
+              >
+                + Add
+              </button>
+            )}
           </div>
 
           <CanvasDropZone onDropAt={handleDropAt}>
@@ -564,6 +573,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
                     element={element}
                     selected={selection.includes(element.id)}
                     gridVisible={gridVisible}
+                    panMode={panMode}
                     onPointerDown={handleElementPointerDown}
                     onResizePointerDown={handleResizePointerDown}
                     onRotatePointerDown={handleRotatePointerDown}
@@ -596,8 +606,8 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
           </CanvasDropZone>
         </div>
 
-        {/* context actions for group selection */}
-        {selectedGroup && (
+        {/* context actions for group selection (hidden in preview — read-only) */}
+        {selectedGroup && !panMode && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-white rounded-lg border border-gray-200 shadow-lg px-2 py-1.5">
             <button
               onClick={() => ungroup(selectedGroup.id)}
@@ -635,6 +645,7 @@ interface CanvasElementProps {
   element: DesignerElement;
   selected: boolean;
   gridVisible: boolean;
+  panMode: boolean;
   onPointerDown: (e: React.PointerEvent, element: DesignerElement) => void;
   onResizePointerDown: (e: React.PointerEvent, element: DesignerElement) => void;
   onRotatePointerDown: (e: React.PointerEvent, element: DesignerElement) => void;
@@ -770,6 +781,7 @@ function CanvasElement({
   element,
   selected,
   gridVisible,
+  panMode,
   onPointerDown,
   onResizePointerDown,
   onRotatePointerDown,
@@ -780,7 +792,7 @@ function CanvasElement({
   void gridVisible;
 
   const startEditing = (e: React.MouseEvent) => {
-    if (element.type !== 'text' || element.locked) return;
+    if (panMode || element.type !== 'text' || element.locked) return;
     e.stopPropagation();
     setDraft(element.text || '');
     setEditing(true);
@@ -805,15 +817,15 @@ function CanvasElement({
         transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
         opacity: element.opacity,
         zIndex: element.zIndex,
-        cursor: element.locked ? 'default' : editing ? 'text' : 'move',
-        outline: selected ? '1.5px solid #2563eb' : element.locked ? '1px dashed #9ca3af' : undefined,
+        cursor: panMode ? 'grab' : element.locked ? 'default' : editing ? 'text' : 'move',
+        outline: selected && !panMode ? '1.5px solid #2563eb' : element.locked && !panMode ? '1px dashed #9ca3af' : undefined,
       }}
       onPointerDown={(e) => {
         if (editing) return;
         if (element.locked) return;
         onPointerDown(e, element);
       }}
-      onDoubleClick={startEditing}
+      onDoubleClick={panMode ? undefined : startEditing}
     >
       {editing ? (
         <textarea
@@ -844,7 +856,7 @@ function CanvasElement({
       )}
 
       {/* selection toolbar */}
-      {selected && !element.locked && (
+      {selected && !panMode && !element.locked && (
         <>
           {/* rotate handle */}
           <div
@@ -889,7 +901,7 @@ function CanvasElement({
           </div>
         </>
       )}
-      {selected && element.locked && (
+      {selected && !panMode && element.locked && (
         <div className="absolute top-0 right-0 p-0.5 text-gray-400">
           <LockOpen className="w-3 h-3" />
         </div>
