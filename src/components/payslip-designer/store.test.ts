@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialStore, designerReducer } from './store';
-import type { DesignerDocument, DesignerElement, DesignerPage, DesignerStore } from './types';
+import { createInitialStore, designerReducer, expandSelectionToElementIds } from './store';
+import type { DesignerDocument, DesignerElement, DesignerGroup, DesignerPage, DesignerStore } from './types';
 
 function el(id: string, zIndex: number): DesignerElement {
   return {
@@ -75,6 +75,56 @@ describe('DUPLICATE_PAGE', () => {
       ...p.settings.footerElements.map((e) => e.id),
     ]);
     expect(new Set(allIds).size).toBe(allIds.length);
+  });
+});
+
+describe('expandSelectionToElementIds', () => {
+  it('expands group ids to their member element ids', () => {
+    const groups: DesignerGroup[] = [{ id: 'g1', name: 'Group', elementIds: ['a', 'b'] }];
+    expect(expandSelectionToElementIds(['g1'], groups)).toEqual(['a', 'b']);
+  });
+
+  it('leaves plain element ids untouched and dedupes mixed selections', () => {
+    const groups: DesignerGroup[] = [{ id: 'g1', name: 'Group', elementIds: ['a', 'b'] }];
+    expect(expandSelectionToElementIds(['g1', 'c', 'a'], groups)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('passes through unknown ids without crashing', () => {
+    expect(expandSelectionToElementIds(['missing', 'g1'], [])).toEqual(['missing', 'g1']);
+    expect(expandSelectionToElementIds([], [])).toEqual([]);
+  });
+});
+
+describe('group-aware element actions', () => {
+  it('refuses to nest a group inside another group', () => {
+    const store = loadDoc({
+      version: 1,
+      name: 'Test',
+      pages: [pageWith([el('a', 1), el('b', 2), el('c', 3)])],
+    });
+    const grouped = designerReducer(store, { type: 'GROUP', ids: ['a', 'b'] });
+    const groupId = grouped.groups[0].id;
+
+    // Attempting to group the group id with another element is a no-op.
+    const after = designerReducer(grouped, { type: 'GROUP', ids: [groupId, 'c'] });
+    expect(after.groups).toHaveLength(1);
+    expect(after.groups[0].elementIds).toEqual(['a', 'b']);
+  });
+
+  it('deletes the group when its members are deleted', () => {
+    const store = loadDoc({
+      version: 1,
+      name: 'Test',
+      pages: [pageWith([el('a', 1), el('b', 2)])],
+    });
+    const grouped = designerReducer(store, { type: 'GROUP', ids: ['a', 'b'] });
+    expect(grouped.groups).toHaveLength(1);
+
+    // Delete via the expanded member ids (what a group selection produces).
+    const groupId = grouped.groups[0].id;
+    const after = designerReducer(grouped, { type: 'DELETE_ELEMENTS', ids: expandSelectionToElementIds([groupId], grouped.groups) });
+    expect(after.document.pages[0].elements).toHaveLength(0);
+    expect(after.groups).toHaveLength(0);
   });
 });
 

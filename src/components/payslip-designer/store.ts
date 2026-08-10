@@ -38,6 +38,22 @@ function pageElements(document: DesignerDocument, pageId: string): DesignerEleme
   return page ? page.elements : [];
 }
 
+/**
+ * Expand a selection that may contain group ids into the underlying element
+ * ids, so group-wide actions (delete/copy/duplicate/z-order) target the real
+ * elements. Plain element ids pass through; results are deduplicated.
+ */
+export function expandSelectionToElementIds(ids: string[], groups: DesignerGroup[]): string[] {
+  const membersById = new Map(groups.map((g) => [g.id, g.elementIds]));
+  const out: string[] = [];
+  for (const id of ids) {
+    const members = membersById.get(id);
+    if (members) out.push(...members);
+    else out.push(id);
+  }
+  return Array.from(new Set(out));
+}
+
 /** Patch matching elements wherever they live (active page first). */
 function patchElements(
   elements: DesignerElement[],
@@ -270,6 +286,9 @@ export function designerReducer(state: DesignerStore, action: DesignerAction): D
     case 'GROUP': {
       const ids = action.ids;
       if (ids.length < 2) return state;
+      // Groups can only contain element ids — never nest another group.
+      const groupIds = new Set(state.groups.map((g) => g.id));
+      if (ids.some((id) => groupIds.has(id))) return state;
       const group: DesignerGroup = { id: uid('grp'), name: 'Group', elementIds: ids };
       return pushHistory(state, {
         ...snapshotOf(state),

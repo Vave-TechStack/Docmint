@@ -23,6 +23,7 @@ import toast from 'react-hot-toast';
 import { PALETTE_LOOKUP } from './palette';
 import { createElementFromPalette, uid } from './element-factory';
 import { useDesigner } from './store-context';
+import { expandSelectionToElementIds } from './store';
 import type { DesignerElement, PaletteComponent } from './types';
 
 // Clipboard for Ctrl+C / Ctrl+V (module-level so it survives re-renders)
@@ -396,7 +397,9 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'c') {
-        const toCopy = activePage?.elements.filter((el) => selection.includes(el.id) && !el.locked);
+        // A selected group id copies its member elements.
+        const ids = expandSelectionToElementIds(selection, groups);
+        const toCopy = activePage?.elements.filter((el) => ids.includes(el.id) && !el.locked);
         if (toCopy?.length) {
           clipboardRef.current = structuredClone(toCopy);
           toast('Copied to clipboard');
@@ -422,7 +425,7 @@ export function DesignerCanvas({ zoom, gridVisible, panMode }: CanvasProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activePage, dispatch, selection]);
+  }, [activePage, dispatch, groups, selection]);
 
   // ctrl/cmd + wheel zoom
   useEffect(() => {

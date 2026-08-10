@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useMemo, useReducer } from 'react';
-import { designerReducer, createInitialStore } from './store';
+import { designerReducer, createInitialStore, expandSelectionToElementIds } from './store';
 import type {
   DesignerAction,
   DesignerDocument,
@@ -71,22 +71,27 @@ export function DesignerProvider({
   const updateElements = useCallback((patches: { id: string; patch: Partial<DesignerElement> }[]) => {
     dispatch({ type: 'UPDATE_ELEMENTS', patches });
   }, []);
+  // Group-aware selection expansion: a selected group id acts on its members.
+  const expand = useCallback(
+    (ids: string[]) => expandSelectionToElementIds(ids, store.groups),
+    [store.groups]
+  );
   const deleteElements = useCallback((ids?: string[]) => {
-    const target = ids ?? store.selection;
+    const target = expand(ids ?? store.selection);
     if (target.length) dispatch({ type: 'DELETE_ELEMENTS', ids: target });
-  }, [store.selection]);
+  }, [expand, store.selection]);
   const duplicateElements = useCallback((ids?: string[]) => {
-    const target = ids ?? store.selection;
+    const target = expand(ids ?? store.selection);
     if (target.length) dispatch({ type: 'DUPLICATE_ELEMENTS', ids: target });
-  }, [store.selection]);
+  }, [expand, store.selection]);
   const bringForward = useCallback((ids?: string[]) => {
-    const target = ids ?? store.selection;
+    const target = expand(ids ?? store.selection);
     if (target.length) dispatch({ type: 'BRING_FORWARD', ids: target });
-  }, [store.selection]);
+  }, [expand, store.selection]);
   const sendBackward = useCallback((ids?: string[]) => {
-    const target = ids ?? store.selection;
+    const target = expand(ids ?? store.selection);
     if (target.length) dispatch({ type: 'SEND_BACKWARD', ids: target });
-  }, [store.selection]);
+  }, [expand, store.selection]);
   const groupSelection = useCallback(() => {
     if (store.selection.length >= 2) dispatch({ type: 'GROUP', ids: store.selection });
   }, [store.selection]);
