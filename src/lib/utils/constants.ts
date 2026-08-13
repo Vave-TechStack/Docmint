@@ -8,6 +8,12 @@ export const PREMIUM_PRICE = 299; // INR per month
 export const ANNUAL_PREMIUM_PRICE = 2870; // INR per year (20% off ₹3,588)
 export const INSTANT_DOWNLOAD_PRICE = 9; // INR
 
+// ─── Email Verification ───
+export const EMAIL_VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// ─── Password Reset ───
+export const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 // ─── Data Retention ───
 export const DATA_RETENTION_DAYS = 30; // Default
 export const DATA_RETENTION_OPTIONS = [30, 60, 90];

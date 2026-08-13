@@ -151,10 +151,12 @@ export async function GET(request: NextRequest) {
         }),
       ]),
 
-      // Conversion: users who have made a payment vs total
+      // Conversion: users who have made a payment vs total. Anonymous
+      // instant-download payments have no userId (nullable) and must not
+      // count as a paying user.
       prisma.payment.groupBy({
         by: ['userId'],
-        where: { status: 'SUCCESS' },
+        where: { status: 'SUCCESS', userId: { not: null } },
         _count: true,
       }),
     ]);

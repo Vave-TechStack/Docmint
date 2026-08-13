@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,37 +18,6 @@ const RAZORPAY_IPS = new Set([
   '65.2.34.105',
   '65.2.34.170',
 ]);
-
-// ─── Rate Limiter (in-memory) ───
-// Simple sliding-window rate limiter to protect against abuse
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
-  const now = Date.now();
-  const record = rateLimitMap.get(key);
-  
-  if (!record || now > record.resetAt) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  
-  if (record.count >= maxRequests) {
-    return false;
-  }
-  
-  record.count++;
-  return true;
-}
-
-// Clean up stale rate limit entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, record] of rateLimitMap) {
-    if (now > record.resetAt) {
-      rateLimitMap.delete(key);
-    }
-  }
-}, 5 * 60 * 1000);
 
 /**
  * Check if request comes from a whitelisted IP
@@ -223,6 +193,21 @@ export async function POST(request: NextRequest) {
           },
         });
 
+        // Idempotency check: Razorpay redelivers webhooks until it gets a 200,
+        // so a replayed activation must not create a duplicate payment row
+        // (which would double-count revenue in the admin dashboard).
+        const recentActivation = await prisma.payment.findFirst({
+          where: {
+            subscriptionId: dbSubscription.id,
+            paymentType: 'SUBSCRIPTION',
+            createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) }, // last 1 hour
+          },
+        });
+        if (recentActivation) {
+          console.log(`[Webhook] Skipping duplicate activation payment for sub: ${razorpaySubId}`);
+          break;
+        }
+
         // Create payment record for the activation
         await prisma.payment.create({
           data: {
@@ -361,13 +346,15 @@ export async function POST(request: NextRequest) {
         const orderEntity = payload.order?.entity;
         if (!orderEntity) break;
 
-        // Record instant download payment
+        // Record instant download payment. The instant flow is anonymous (no
+        // sign-in required), so there is no organization/user to attribute
+        // the payment to — organizationId/userId are nullable for this case.
+        // (Writing placeholder IDs here violated the FK constraints and made
+        // every instant payment fail to record.)
         await prisma.payment.upsert({
           where: { razorpayOrderId: orderEntity.id },
           update: { status: 'SUCCESS' },
           create: {
-            organizationId: 'webhook', // Will be updated when user claims
-            userId: 'webhook',
             razorpayOrderId: orderEntity.id,
             amount: orderEntity.amount,
             currency: orderEntity.currency || 'INR',

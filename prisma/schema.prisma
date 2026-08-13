@@ -508,8 +508,11 @@ enum SubscriptionStatus {
 
 model Payment {
   id                  String        @id @default(cuid())
-  organizationId      String
-  userId              String
+  // organizationId/userId are nullable because the ₹9 instant-download flow
+  // is anonymous (no sign-in required) — those payments are recorded by the
+  // Razorpay webhook with no organization/user to attribute them to.
+  organizationId      String?
+  userId              String?
   subscriptionId      String?
   razorpayOrderId     String?       @unique
   razorpayPaymentId   String?       @unique
@@ -527,12 +530,16 @@ model Payment {
   refundId            String?
   refundAmount        Int?
   refundReason        String?
+  // One-time-use marker for instant (₹9) downloads: the download route sets
+  // this atomically so a single payment cannot be replayed for unlimited
+  // downloads. NULL until the first download consumes it.
+  usedAt              DateTime?
   metadata            Json          @default("{}")
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
-  organization Organization  @relation(fields: [organizationId], references: [id])
-  user         User          @relation(fields: [userId], references: [id])
+  organization Organization?  @relation(fields: [organizationId], references: [id])
+  user         User?          @relation(fields: [userId], references: [id])
   subscription Subscription? @relation(fields: [subscriptionId], references: [id])
 
   @@index([organizationId])

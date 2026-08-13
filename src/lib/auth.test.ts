@@ -51,6 +51,7 @@ vi.mock('@/lib/prisma', () => ({
 // ---------------------------------------------------------------------------
 
 import { jwtCallback, sessionCallback, signInCallback, redirectCallback, authorizeCallback } from './auth';
+import { resetRateLimitsForTests } from '@/lib/rate-limit';
 import { prisma } from '@/lib/prisma';
 
 // ---------------------------------------------------------------------------
@@ -290,7 +291,7 @@ describe('signInCallback', () => {
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it('should allow Google sign-in when user does not exist yet', async () => {
+  it('should reject Google sign-in when no DocMint account exists (no silent OAuth sign-up)', async () => {
     (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await signInCallback({
@@ -298,19 +299,21 @@ describe('signInCallback', () => {
       account: { provider: 'google' },
     });
 
-    expect(result).toBe(true);
+    expect(result).toBe(false);
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'new@google.com' },
     });
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
-  it('should update existing user profile on Google sign-in', async () => {
+  it('should update an existing verified user profile on Google sign-in', async () => {
     const mockExisting = {
       id: 'existing-id',
       email: 'existing@google.com',
       name: 'Old Name',
       image: null,
+      isActive: true,
+      emailVerified: new Date('2024-01-15T00:00:00.000Z'),
     };
     (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(mockExisting);
     (prisma.user.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -336,6 +339,8 @@ describe('signInCallback', () => {
       email: 'existing@google.com',
       name: 'Old Name',
       image: 'https://pic.com/old',
+      isActive: true,
+      emailVerified: new Date('2024-01-15T00:00:00.000Z'),
     };
     (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(mockExisting);
     (prisma.user.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -355,6 +360,44 @@ describe('signInCallback', () => {
     });
   });
 
+  it('should reject Google sign-in for an existing user whose email is not verified (account takeover guard)', async () => {
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'unverified-id',
+      email: 'unverified@google.com',
+      name: 'Unverified',
+      image: null,
+      isActive: true,
+      emailVerified: null,
+    });
+
+    const result = await signInCallback({
+      user: { email: 'unverified@google.com', name: 'Attacker' },
+      account: { provider: 'google' },
+    });
+
+    expect(result).toBe(false);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('should reject Google sign-in for a disabled account', async () => {
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'disabled-id',
+      email: 'disabled@google.com',
+      name: 'Disabled',
+      image: null,
+      isActive: false,
+      emailVerified: new Date('2024-01-15T00:00:00.000Z'),
+    });
+
+    const result = await signInCallback({
+      user: { email: 'disabled@google.com' },
+      account: { provider: 'google' },
+    });
+
+    expect(result).toBe(false);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
   it('should reject Google sign-in when user has no email', async () => {
     const result = await signInCallback({
       user: { email: null },
@@ -365,7 +408,7 @@ describe('signInCallback', () => {
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it('should allow Microsoft sign-in when user does not exist', async () => {
+  it('should reject Microsoft sign-in when no DocMint account exists', async () => {
     (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await signInCallback({
@@ -373,15 +416,17 @@ describe('signInCallback', () => {
       account: { provider: 'microsoft-entra-id' },
     });
 
-    expect(result).toBe(true);
+    expect(result).toBe(false);
   });
 
-  it('should update existing user on Microsoft sign-in', async () => {
+  it('should update an existing verified user on Microsoft sign-in', async () => {
     const mockExisting = {
       id: 'existing-ms',
       email: 'existing@microsoft.com',
       name: 'Old Name',
       image: null,
+      isActive: true,
+      emailVerified: new Date('2024-01-15T00:00:00.000Z'),
     };
     (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(mockExisting);
     (prisma.user.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -498,6 +543,9 @@ describe('redirectCallback', () => {
 describe('authorizeCallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The login rate limiter is module-level; reset it so a full test file
+    // run of ~10 attempts on the same email doesn't trip the guard.
+    resetRateLimitsForTests();
   });
 
   it('should return null when email is missing', async () => {

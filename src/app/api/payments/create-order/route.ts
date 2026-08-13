@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { PaymentService } from '@/lib/payment/razorpay';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // Abuse guard: each order is a real Razorpay API call.
+    const ip = getClientIp(request);
+    if (!checkRateLimit(`create-order:${ip}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many order requests. Please slow down.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { type, amount } = body;
 

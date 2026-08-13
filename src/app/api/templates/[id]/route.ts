@@ -17,7 +17,14 @@ export async function GET(
     try {
       const template = await TemplateEngine.getById(id, tenantId);
       if (template) {
-        return NextResponse.json({ success: true, data: template });
+        // Premium templates: strip paywalled fields (htmlTemplate, variables,
+        // placeholders, content) unless the caller holds premium access — the
+        // download route is gated too, but the raw HTML must not leak here.
+        const sanitized = await TemplateEngine.sanitizeTemplateForCaller(
+          template as unknown as Record<string, unknown>,
+          session
+        );
+        return NextResponse.json({ success: true, data: sanitized });
       }
     } catch (dbError) {
       console.warn('DB unavailable for template detail, checking fallback:', (dbError as Error)?.message);

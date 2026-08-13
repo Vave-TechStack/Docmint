@@ -1,0 +1,21 @@
+# Dependencies & build artifacts — never copy local copies into the image
+# (without these, `COPY . .` silently shadows the container's npm ci install
+# with the host's node_modules, which is how the prod-only-install build bug
+# went unnoticed: it only failed on clean machines).
+node_modules
+.next
+
+# VCS & tooling
+.git
+.gitignore
+.vscode
+.idea
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local-only config & scratch files
+coverage
+.docker

@@ -5,6 +5,7 @@ import Microsoft from 'next-auth/providers/microsoft-entra-id';
 import type { Provider } from 'next-auth/providers';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 /**
  * DocMint NextAuth v5 Configuration
@@ -39,12 +40,16 @@ const providers: Provider[] = [
 ];
 
 // ─── Google OAuth (only if configured) ───
+// NOTE: allowDangerousEmailAccountLinking is deliberately NOT set. Linking a
+// fresh OAuth account to an existing DocMint user purely by matching email
+// would let anyone who can register an OAuth account with a victim's email
+// sign in as that user. The signInCallback below enforces that OAuth may
+// only sign in an existing, active, email-verified user.
 if (process.env.GOOGLE_CLIENT_ID) {
   providers.push(
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-      allowDangerousEmailAccountLinking: true,
     })
   );
 }
@@ -55,7 +60,6 @@ if (process.env.MICROSOFT_CLIENT_ID) {
     Microsoft({
       clientId: process.env.MICROSOFT_CLIENT_ID,
       clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
-      allowDangerousEmailAccountLinking: true,
       // Note: tenantId is configured in the Azure AD app registration itself
     }) as Provider
   );
@@ -75,9 +79,15 @@ export async function authorizeCallback(credentials: any): Promise<any> {
     return null;
   }
 
-  const email = credentials.email as string;
+  const email = (credentials.email as string).trim().toLowerCase();
   const password = credentials.password as string;
-  console.log('[AUTH] Attempting login for:', email);
+
+  // Brute-force guard: at most 10 failed-or-successful attempts per minute
+  // per email, across all IPs (the authorize callback has no request/IP).
+  if (!checkRateLimit(`login:${email}`, 10, 60_000)) {
+    console.warn('[AUTH] Login rate limit hit for:', email);
+    return null;
+  }
 
   try {
     const user = await prisma.user.findUnique({
@@ -108,7 +118,6 @@ export async function authorizeCallback(credentials: any): Promise<any> {
       return null;
     }
 
-    console.log('[AUTH] Password valid! Logging in:', email);
     return {
       id: user.id,
       email: user.email,
@@ -130,7 +139,19 @@ export async function authorizeCallback(credentials: any): Promise<any> {
 /**
  * SignIn callback — controls whether a user is allowed to sign in.
  * Credentials sign-ins are always allowed (already validated in authorize).
- * OAuth sign-ins check existing user and update profile data.
+ *
+ * OAuth sign-ins are the sensitive path. Without an account-linking record,
+ * an OAuth login is only as trustworthy as "the provider says this email
+ * belongs to this person". To prevent account takeover via a fresh OAuth
+ * account matching an existing DocMint email, OAuth may only sign in a user
+ * who:
+ *   1. already has a DocMint account (no silent OAuth sign-up — there is no
+ *      adapter to create one, and a session without a DB user breaks), and
+ *   2. is active, and
+ *   3. has a verified email (an attacker cannot verify an email they do not
+ *      own, and the legitimate owner can verify it themselves).
+ * Combined with removing allowDangerousEmailAccountLinking from the
+ * providers, this closes the OAuth account-takeover path.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function signInCallback({ user, account }: any): Promise<boolean> {
@@ -139,19 +160,35 @@ export async function signInCallback({ user, account }: any): Promise<boolean> {
 
   // For OAuth, check if email is already registered
   if (account?.provider === 'google' || account?.provider === 'microsoft-entra-id') {
-    // If user doesn't exist yet, allow sign up
     if (!user.email) return false;
     const existing = await prisma.user.findUnique({ where: { email: user.email } });
-    if (existing) {
-      // Update the existing user's image/name if provided by OAuth
-      await prisma.user.update({
-        where: { email: user.email },
-        data: {
-          image: user.image || existing.image,
-          name: user.name || existing.name,
-        },
-      });
+
+    // No auto sign-up via OAuth: the account must already exist in DocMint.
+    if (!existing) {
+      console.warn('[AUTH] OAuth sign-in rejected: no DocMint account for', user.email);
+      return false;
     }
+
+    // Disabled accounts cannot sign in through any provider.
+    if (!existing.isActive) {
+      console.warn('[AUTH] OAuth sign-in rejected: account disabled for', user.email);
+      return false;
+    }
+
+    // The anti-account-takeover control: the account email must be verified.
+    if (!existing.emailVerified) {
+      console.warn('[AUTH] OAuth sign-in rejected: email not verified for', user.email);
+      return false;
+    }
+
+    // Update the existing user's image/name if provided by OAuth
+    await prisma.user.update({
+      where: { email: user.email },
+      data: {
+        image: user.image || existing.image,
+        name: user.name || existing.name,
+      },
+    });
     return true;
   }
 

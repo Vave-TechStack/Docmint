@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma';
 import type { Prisma } from '@prisma/client';
 import { toJson } from '@/lib/utils/prisma-json';
 import { inferImageSubtype } from '@/lib/utils/image-upload';
+import { hasActivePremiumSubscription } from '@/lib/subscription';
 import type { TemplateData, TemplateVariable, TemplateVisibility } from '@/types';
 import { DocumentEngine } from './document-engine';
 
@@ -253,6 +254,42 @@ export class TemplateEngine {
     ]);
 
     return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
+  }
+
+  /**
+   * Whether a caller may see/render premium template content (htmlTemplate,
+   * placeholders, content): admins manage templates; everyone else needs an
+   * active Premium subscription on their organization.
+   */
+  static async canAccessPremiumContent(session: {
+    user?: { role?: string | null; organizationId?: string | null } | null;
+  } | null): Promise<boolean> {
+    if (!session?.user) return false;
+    if (session.user.role === 'SUPER_ADMIN' || session.user.role === 'ADMIN') return true;
+    return hasActivePremiumSubscription(session.user.organizationId);
+  }
+
+  /**
+   * Strip the paywalled fields (htmlTemplate, placeholders, content, variables)
+   * from a premium template when the caller has no premium access. Metadata
+   * (name, description, thumbnail, isPremium, …) is kept so the UI can render
+   * a lock card instead of the editor.
+   */
+  static async sanitizeTemplateForCaller<T extends Record<string, unknown>>(
+    template: T,
+    session: {
+      user?: { role?: string | null; organizationId?: string | null } | null;
+    } | null
+  ): Promise<T> {
+    if (!template.isPremium) return template;
+    if (await this.canAccessPremiumContent(session)) return template;
+
+    const sanitized = { ...template };
+    delete sanitized.htmlTemplate;
+    delete sanitized.placeholders;
+    delete sanitized.content;
+    delete sanitized.variables;
+    return sanitized;
   }
 
   static async delete(id: string, tenantId: string): Promise<void> {

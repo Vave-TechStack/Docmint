@@ -160,22 +160,43 @@ export function Navbar() {
         {mobileMenuOpen && (
           <div className="md:hidden pb-4 border-t border-gray-100 mt-2 pt-4">
             <div className="flex flex-col space-y-2">
-              <Link href="/templates" className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+              {/* Every mobile link closes the menu on tap (it used to stay
+                  open after navigating). */}
+              <Link
+                href="/templates"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg"
+              >
                 Templates
               </Link>
-              <Link href="/pricing" className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+              <Link
+                href="/pricing"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg"
+              >
                 Pricing
               </Link>
-              <Link href="/instant" className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+              <Link
+                href="/instant"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg"
+              >
                 Instant Download
               </Link>
               {isAuthenticated ? (
                 <>
-                  <Link href="/dashboard" className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+                  <Link
+                    href="/dashboard"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg"
+                  >
                     Dashboard
                   </Link>
                   <button
-                    onClick={() => signOut()}
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      signOut();
+                    }}
                     className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg text-left"
                   >
                     Sign Out
@@ -183,10 +204,18 @@ export function Navbar() {
                 </>
               ) : (
                 <>
-                  <Link href="/login" className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+                  <Link
+                    href="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg"
+                  >
                     Sign In
                   </Link>
-                  <Link href="/signup" className="px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg">
+                  <Link
+                    href="/signup"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg"
+                  >
                     Get Started
                   </Link>
                 </>

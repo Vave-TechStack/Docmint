@@ -11,12 +11,10 @@ const nextConfig: NextConfig = {
     formats: ['image/avif', 'image/webp'],
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**',
-      },
-    ],
+    // No remote image hosts are used (thumbnails are generated locally and
+    // rendered unoptimized; uploaded images are data URLs), so the optimizer
+    // must not be allowed to fetch arbitrary hosts.
+    remotePatterns: [],
   },
 
   // ─── Security Headers ───
@@ -82,7 +80,12 @@ const nextConfig: NextConfig = {
 
   // ─── Compiler Options ───
   compiler: {
-    removeConsole: process.env.NODE_ENV === 'production',
+    // Strip debug/info logs in production, but KEEP error and warn — the app
+    // relies on console.error/warn for auth failures, webhook errors, and the
+    // startup config check. Removing everything makes production un-debuggable.
+    removeConsole: {
+      exclude: ['error', 'warn'],
+    },
   },
 
   // ─── Experimental Features ───

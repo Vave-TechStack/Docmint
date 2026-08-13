@@ -86,9 +86,12 @@ export default function SharedDocumentPage() {
     if (!sharedDoc) return;
     setDownloading(true);
     try {
+      // Password-protected shares must present the password to download too;
+      // the server rejects the download otherwise (and re-prompts if needed).
       const res = await fetch(`/api/documents/share/${token}/download`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: password || undefined }),
       });
       if (res.ok) {
         const blob = await res.blob();
@@ -103,7 +106,12 @@ export default function SharedDocumentPage() {
         toast.success('Document downloaded');
       } else {
         const err = await res.json();
-        toast.error(err.error || 'Download failed');
+        if (err.requiresPassword) {
+          setRequiresPassword(true);
+          setPassword('');
+        } else {
+          toast.error(err.error || 'Download failed');
+        }
       }
     } catch {
       toast.error('Download failed');

@@ -84,11 +84,15 @@ export async function PATCH(request: NextRequest) {
 
     if (action === 'renew') {
       // For renewal via payment (from Razorpay checkout), verify the payment
+      // end-to-end: HMAC signature + Razorpay API cross-check that it was
+      // captured at the monthly amount (same anti-replay guarantee as new
+      // subscriptions — a cheaper payment can't renew a subscription).
       if (razorpayPaymentId && razorpayOrderId && razorpaySignature) {
-        const isValid = await PaymentService.verifyPaymentAsync(
+        const isValid = await PaymentService.verifySubscriptionPayment(
           razorpayOrderId,
           razorpayPaymentId,
-          razorpaySignature
+          razorpaySignature,
+          PaymentService.SUBSCRIPTION_AMOUNT
         );
         if (!isValid) {
           return NextResponse.json(
@@ -143,7 +147,7 @@ export async function PATCH(request: NextRequest) {
             razorpayOrderId: razorpayOrderId || null,
             razorpayPaymentId: razorpayPaymentId || null,
             razorpaySignature: razorpaySignature || null,
-            amount: 29900,
+            amount: PaymentService.SUBSCRIPTION_AMOUNT,
             currency: 'INR',
             status: razorpayPaymentId ? 'SUCCESS' : 'PENDING',
             paymentType: 'RENEWAL',
@@ -257,11 +261,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify payment
-    const isValid = await PaymentService.verifyPaymentAsync(
+    // Verify payment end-to-end: HMAC signature + Razorpay API cross-check
+    // that the payment was captured at exactly the subscription amount. This
+    // is what stops a ₹9 instant payment from being replayed to activate a
+    // full Premium subscription.
+    const isValid = await PaymentService.verifySubscriptionPayment(
       razorpayOrderId,
       razorpayPaymentId,
-      razorpaySignature
+      razorpaySignature,
+      subscriptionAmount
     );
 
     if (!isValid) {

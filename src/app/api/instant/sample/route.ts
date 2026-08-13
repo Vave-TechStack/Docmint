@@ -6,9 +6,19 @@ import { resolveTemplateWithFallback } from '@/lib/data/sample-templates';
 import { replaceSvgDataUris } from '@/lib/utils/image-placeholders';
 import { validateImageVariables, validateImageDataUrl } from '@/lib/utils/image-upload';
 import { sanitizeCustomSections, injectCustomSections } from '@/lib/utils/custom-sections';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // Abuse guard: sample generation is CPU-heavy (DOCX/PDF render).
+    const ip = getClientIp(request);
+    if (!checkRateLimit(`sample:${ip}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many sample requests. Please slow down.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { templateId, variables = {}, format = 'pdf', htmlContent, htmlTemplate } = body;
 

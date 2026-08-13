@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { EmailService } from '@/lib/email/email-service';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 /**
  * POST /api/contact
@@ -32,21 +33,14 @@ export async function POST(request: Request) {
       );
     }
 
-    // ─── Rate limiting (simple in-memory check) ───
-    const ip = request.headers.get('x-forwarded-for') || 'unknown';
-    const rateKey = `contact:${ip}`;
-    const rateLimit = globalThis.__contactRateLimit ?? new Map<string, number>();
-    globalThis.__contactRateLimit = rateLimit;
-
-    const now = Date.now();
-    const lastSubmission = rateLimit.get(rateKey);
-    if (lastSubmission && now - lastSubmission < 60_000) {
+    // ─── Rate limiting (shared in-memory check) ───
+    const ip = getClientIp(request);
+    if (!checkRateLimit(`contact:${ip}`, 1, 60_000)) {
       return NextResponse.json(
         { error: 'Please wait at least 1 minute between submissions' },
         { status: 429 }
       );
     }
-    rateLimit.set(rateKey, now);
 
     // ─── Send email ───
     const sent = await EmailService.sendContactEnquiry({
@@ -73,10 +67,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
-
-// Augment global for rate limiting
-declare global {
-   
-  var __contactRateLimit: Map<string, number> | undefined;
 }

@@ -84,6 +84,45 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing userId or action' }, { status: 400 });
     }
 
+    const isSuperAdmin = session.user.role === 'SUPER_ADMIN';
+
+    // Load the target user so mutations can be scoped and privileged accounts
+    // protected. Previously any ADMIN could act on users of ANY organization
+    // (cross-tenant mutation) and even promote others to ADMIN.
+    const target = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, organizationId: true, role: true },
+    });
+    if (!target) {
+      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
+    }
+
+    // Non-super-admins (ADMIN role) may only manage users in their OWN org,
+    // and may never act on other admins or super-admins.
+    if (!isSuperAdmin) {
+      if (target.organizationId !== session.user.organizationId) {
+        return NextResponse.json(
+          { success: false, error: 'Cannot manage users outside your organization' },
+          { status: 403 }
+        );
+      }
+      if (target.role === 'ADMIN' || target.role === 'SUPER_ADMIN') {
+        return NextResponse.json(
+          { success: false, error: 'Cannot modify administrator accounts' },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Role changes (promote/demote) are a system-level privilege: only
+    // SUPER_ADMIN may grant or revoke the ADMIN role.
+    if ((action === 'make_admin' || action === 'make_user') && !isSuperAdmin) {
+      return NextResponse.json(
+        { success: false, error: 'Only super admins can change user roles' },
+        { status: 403 }
+      );
+    }
+
     switch (action) {
       case 'suspend':
         await prisma.user.update({ where: { id: userId }, data: { isActive: false } });

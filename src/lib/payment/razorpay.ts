@@ -142,6 +142,114 @@ export class PaymentService {
   }
 
   /**
+   * Verify a subscription payment end-to-end against the Razorpay API.
+   *
+   * The HMAC signature (verifyPaymentAsync) only proves the client holds a
+   * payment ID for an order — it cannot prove how much was actually paid.
+   * That lets a ₹9 instant-download payment be replayed here to activate (or
+   * renew) a full Premium subscription. So on top of the signature we
+   * cross-check the payment with Razorpay:
+   *
+   *   1. the payment must belong to the order named in the signature,
+   *   2. the payment must actually have moved money (status 'captured' —
+   *      orders are created with payment_capture: 1, so a successful checkout
+   *      is always captured; anything less permissive is refused), and
+   *   3. the paid amount must be exactly the expected subscription amount
+   *      (paise), so a cheaper order/payment can never be replayed.
+   *
+   * Fails closed: any API error, missing data, or mismatch returns false.
+   */
+  static async verifySubscriptionPayment(
+    orderId: string,
+    paymentId: string,
+    signature: string,
+    expectedAmount: number
+  ): Promise<boolean> {
+    // 1. Existing HMAC signature check over `${orderId}|${paymentId}`.
+    let signatureValid: boolean;
+    try {
+      signatureValid = await this.verifyPaymentAsync(orderId, paymentId, signature);
+    } catch (error) {
+      console.error('Subscription payment signature verification failed:', error);
+      return false;
+    }
+    if (!signatureValid) return false;
+
+    // 2. Cross-check the payment with the Razorpay API.
+    let payment: Record<string, unknown>;
+    try {
+      payment = await this.getPayment(paymentId);
+    } catch (error) {
+      console.error('Subscription payment verification failed:', error);
+      return false;
+    }
+
+    // 3. The payment must belong to the order named in the signature.
+    if (payment.order_id !== orderId) return false;
+
+    // 4. Money must have actually moved — captured only (see doc comment).
+    if (payment.status !== 'captured') return false;
+
+    // 5. The paid amount must be exactly the expected subscription amount.
+    if (payment.amount !== expectedAmount) return false;
+
+    return true;
+  }
+
+  /**
+   * Verify an instant-download (₹9) payment end-to-end against the Razorpay
+   * API — the same hardening as verifySubscriptionPayment.
+   *
+   * The bare HMAC (verifyPaymentAsync) only proves the client holds a payment
+   * ID for an order; it cannot prove money moved or how much was paid. That
+   * lets a failed/cheaper payment be presented as a valid ₹9 purchase, and
+   * lets one payment be replayed for unlimited downloads. So on top of the
+   * signature we require, via the Razorpay API:
+   *
+   *   1. the payment belongs to the order named in the signature,
+   *   2. the payment was actually captured (money moved), and
+   *   3. the paid amount is exactly the ₹9 instant price.
+   *
+   * Replay protection (one payment = one download) is handled by the caller
+   * marking the payment consumed (Payment.usedAt).
+   */
+  static async verifyInstantDownloadPayment(
+    orderId: string,
+    paymentId: string,
+    signature: string
+  ): Promise<boolean> {
+    // 1. Existing HMAC signature check over `${orderId}|${paymentId}`.
+    let signatureValid: boolean;
+    try {
+      signatureValid = await this.verifyPaymentAsync(orderId, paymentId, signature);
+    } catch (error) {
+      console.error('Instant payment signature verification failed:', error);
+      return false;
+    }
+    if (!signatureValid) return false;
+
+    // 2. Cross-check the payment with the Razorpay API.
+    let payment: Record<string, unknown>;
+    try {
+      payment = await this.getPayment(paymentId);
+    } catch (error) {
+      console.error('Instant payment verification failed:', error);
+      return false;
+    }
+
+    // 3. The payment must belong to the order named in the signature.
+    if (payment.order_id !== orderId) return false;
+
+    // 4. Money must have actually moved — captured only.
+    if (payment.status !== 'captured') return false;
+
+    // 5. The paid amount must be exactly the ₹9 instant price.
+    if (payment.amount !== this.MIN_INSTANT_AMOUNT) return false;
+
+    return true;
+  }
+
+  /**
    * Process refund
    */
   static async processRefund(

@@ -30,7 +30,16 @@ export async function GET(request: NextRequest) {
       const result = await TemplateEngine.list(options);
       // If DB returned data, use it
       if (result.data && result.data.length > 0) {
-        return NextResponse.json({ success: true, ...result });
+        // Premium templates: strip paywalled fields (htmlTemplate, variables,
+        // placeholders, content) unless the caller holds premium access. The
+        // instant (₹9) flow only ever requests isPremium=false templates, so
+        // its client-side rendering keeps working unchanged.
+        const data = await Promise.all(
+          result.data.map((t) =>
+            TemplateEngine.sanitizeTemplateForCaller(t as Record<string, unknown>, session)
+          )
+        );
+        return NextResponse.json({ success: true, ...result, data });
       }
     } catch (dbError) {
       console.warn('DB unavailable, using fallback template data:', (dbError as Error)?.message);

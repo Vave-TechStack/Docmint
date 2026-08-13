@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -10,8 +10,9 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Eye, EyeOff, Loader2, Mail, Lock } from 'lucide-react';
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({ email: '', password: '' });
@@ -29,10 +30,24 @@ export default function LoginPage() {
 
       if (result?.error) {
         console.error('Login error:', result.error);
-        toast.error(`Login failed: ${result.error}`);
+        // NextAuth returns generic error codes (e.g. "CredentialsSignin" for
+        // any failed credentials login) — never echo them to the user, and
+        // never reveal whether the email exists. Map to a friendly message.
+        const friendly =
+          result.error === 'CredentialsSignin'
+            ? 'Invalid email or password'
+            : 'Unable to sign in. Please try again.';
+        toast.error(friendly);
       } else {
         toast.success('Welcome back!');
-        router.push('/dashboard');
+        // Return to the page the user was on (the proxy redirects here with
+        // ?callbackUrl=...). Only relative paths are honored — an absolute
+        // URL would be an open redirect.
+        const rawCallback = searchParams.get('callbackUrl') || '';
+        const callbackUrl = rawCallback.startsWith('/') && !rawCallback.startsWith('//')
+          ? rawCallback
+          : '/dashboard';
+        router.push(callbackUrl);
         router.refresh();
       }
     } catch {
@@ -80,7 +95,7 @@ export default function LoginPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => handleOAuthSignIn('microsoft')}
+                onClick={() => handleOAuthSignIn('microsoft-entra-id')}
                 disabled={isLoading}
                 className="w-full"
               >
@@ -164,5 +179,19 @@ export default function LoginPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      }
+    >
+      <LoginContent />
+    </Suspense>
   );
 }

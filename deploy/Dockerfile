@@ -11,7 +11,9 @@ RUN apk add --no-cache curl
 
 # Copy package files
 COPY package.json package-lock.json ./
-RUN npm ci --only=production --ignore-scripts
+# Full install (including devDependencies): next build needs @tailwindcss/postcss,
+# typescript, and @types/* to compile and typecheck the app.
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -53,6 +55,6 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:3000/health.txt || exit 1
 
 CMD ["node", "server.js"]

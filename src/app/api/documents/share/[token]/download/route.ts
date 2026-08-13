@@ -6,7 +6,7 @@ import { replaceSvgDataUris } from '@/lib/utils/image-placeholders';
 export const dynamic = 'force-dynamic';
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
   try {
@@ -41,6 +41,34 @@ export async function POST(
         { success: false, error: 'Maximum downloads reached' },
         { status: 410 }
       );
+    }
+
+    // ─── Password gate ───
+    // The view route verifies the share password, so the download endpoint
+    // must too — otherwise a password-protected share could be downloaded by
+    // anyone holding the token (the whole point of the password is defeated).
+    const body = (await request.json().catch(() => ({}))) as { password?: unknown };
+    const password = typeof body.password === 'string' ? body.password : '';
+
+    if (share.password) {
+      if (!password) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Password required to download this document',
+            requiresPassword: true,
+          },
+          { status: 401 }
+        );
+      }
+
+      const valid = await DocumentEngine.verifySharePassword(password, share.password);
+      if (!valid) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid password' },
+          { status: 401 }
+        );
+      }
     }
 
     if (!share.document.htmlContent) {

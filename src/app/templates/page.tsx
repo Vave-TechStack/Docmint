@@ -61,10 +61,10 @@ function TemplatesPageContent() {
   
   // Read initial category from URL params (e.g. from home page category cards)
   useEffect(() => {
+    // searchParams.get() already URL-decodes the value.
     const cat = searchParams.get('category');
     if (cat) {
-      const decoded = decodeURIComponent(cat);
-      const known = DOCUMENT_CATEGORIES.find(c => c.name === decoded);
+      const known = DOCUMENT_CATEGORIES.find(c => c.name === cat);
       // Intentional: sync the selected category with the URL param.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (known) setSelectedCategory(known.name);
@@ -77,55 +77,73 @@ function TemplatesPageContent() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFilters, setShowFilters] = useState(false);
 
-  // Latest-value ref so the debounced search effect can read the current term
-  // without making fetchTemplates (and the effects that depend on it) change
-  // on every keystroke — which would defeat the debounce with unthrottled refetches.
+  // Refs mirror the latest search term + filter state so fetchTemplates can keep
+  // a STABLE identity (empty deps). Otherwise every keystroke/filter/page change
+  // recreates it, which retriggers the debounced search effect and fires
+  // overlapping requests whose slow responses clobber newer filtered results
+  // (and the debounce's setPage(1) bounced every 'Next' click back to page 1).
   const searchRef = useRef(search);
+  const filtersRef = useRef({ selectedCategory, selectedVisibility, sortBy });
 
   useEffect(() => {
     searchRef.current = search;
   }, [search]);
 
+  useEffect(() => {
+    filtersRef.current = { selectedCategory, selectedVisibility, sortBy };
+  });
+
+  // Monotonic request id: only the LATEST request may apply its response, so a
+  // slow older fetch can never overwrite a newer filtered/page result.
+  const requestSeq = useRef(0);
+
   const fetchTemplates = useCallback(async (searchTerm?: string, pageNum?: number) => {
+    const seq = ++requestSeq.current;
+    const { selectedCategory: cat, selectedVisibility: vis, sortBy: sort } = filtersRef.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (selectedCategory) params.set('category', selectedCategory);
-      if (selectedVisibility === 'INSTANT') {
+      if (cat) params.set('category', cat);
+      if (vis === 'INSTANT') {
         // Instant (₹9): PUBLIC visibility AND explicitly not premium.
         params.set('type', 'PUBLIC');
         params.set('isPremium', 'false');
-      } else if (selectedVisibility === 'PREMIUM') {
+      } else if (vis === 'PREMIUM') {
         // Premium templates keep visibility PUBLIC but carry the isPremium flag.
         params.set('isPremium', 'true');
-      } else if (selectedVisibility) {
-        params.set('type', selectedVisibility);
+      } else if (vis) {
+        params.set('type', vis);
       }
       if (searchTerm) params.set('search', searchTerm);
-      params.set('sortBy', sortBy);
-      params.set('page', String(pageNum ?? page));
+      params.set('sortBy', sort);
+      params.set('page', String(pageNum ?? 1));
       params.set('pageSize', '24');
 
       const res = await fetch(`/api/templates?${params}`);
       const data = await res.json();
+      if (seq !== requestSeq.current) return; // stale response — discard
       setTemplates(data.data || []);
       setTotal(data.total || 0);
       setTotalPages(data.totalPages || 1);
     } catch {
+      if (seq !== requestSeq.current) return;
       setTemplates([]);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  }, [selectedCategory, selectedVisibility, sortBy, page]);
+  }, []);
 
+  // Filter / sort changes → jump back to page 1 and refetch.
   useEffect(() => {
-    // Intentional: refetch when filters change (reads the latest search term).
-    fetchTemplates(searchRef.current);
-  }, [selectedCategory, selectedVisibility, sortBy, page, fetchTemplates]);
+    // Intentional: reset the page when the filter set changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPage(1);
+    fetchTemplates(searchRef.current, 1);
+  }, [selectedCategory, selectedVisibility, sortBy, fetchTemplates]);
 
+  // Search — debounced; fires only on the search term (fetchTemplates is stable).
   useEffect(() => {
     const delay = setTimeout(() => {
-      // Fetch with new page=1 and the latest search term
       setPage(1);
       fetchTemplates(searchRef.current, 1);
     }, 300);
@@ -406,7 +424,11 @@ function TemplatesPageContent() {
         {totalPages > 1 && (
           <div className="flex items-center justify-center gap-2 mt-8">
             <button
-              onClick={() => setPage(Math.max(1, page - 1))}
+              onClick={() => {
+                const p = Math.max(1, page - 1);
+                setPage(p);
+                fetchTemplates(searchRef.current, p);
+              }}
               disabled={page === 1}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm disabled:opacity-50 hover:bg-gray-50"
             >
@@ -419,7 +441,10 @@ function TemplatesPageContent() {
               return (
                 <button
                   key={p}
-                  onClick={() => setPage(p)}
+                  onClick={() => {
+                    setPage(p);
+                    fetchTemplates(searchRef.current, p);
+                  }}
                   className={`w-9 h-9 rounded-lg text-sm font-medium ${
                     p === page ? 'bg-blue-600 text-white' : 'border border-gray-200 hover:bg-gray-50'
                   }`}
@@ -429,7 +454,11 @@ function TemplatesPageContent() {
               );
             })}
             <button
-              onClick={() => setPage(Math.min(totalPages, page + 1))}
+              onClick={() => {
+                const p = Math.min(totalPages, page + 1);
+                setPage(p);
+                fetchTemplates(searchRef.current, p);
+              }}
               disabled={page === totalPages}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm disabled:opacity-50 hover:bg-gray-50"
             >

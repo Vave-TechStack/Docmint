@@ -7,13 +7,18 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production
+# Full install (including devDependencies): next build needs @tailwindcss/postcss,
+# typescript, and @types/* to compile and typecheck the app.
+RUN npm ci
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# Generate the Prisma client (needed for next build to typecheck/import it)
+RUN npx prisma generate
 
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build

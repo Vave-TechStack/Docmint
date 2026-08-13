@@ -53,7 +53,11 @@ function post(body: string, signature?: string): Promise<Response> {
 
 describe('POST /api/webhooks/razorpay', () => {
   beforeEach(() => {
+    // restoreAllMocks restores spies but does NOT clear the call history of
+    // the hoisted prisma vi.fn() mocks — without clearAllMocks, assertions
+    // like `not.toHaveBeenCalled()` see calls from earlier tests.
     vi.restoreAllMocks();
+    vi.clearAllMocks();
     process.env.RAZORPAY_WEBHOOK_SECRET = SECRET;
     // Silence the route's logging during tests
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -117,9 +121,25 @@ describe('POST /api/webhooks/razorpay', () => {
           currency: 'INR',
           status: 'SUCCESS',
           paymentType: 'INSTANT_DOWNLOAD',
-          organizationId: 'webhook',
         }),
       });
+    });
+
+    it('records instant payments without placeholder org/user IDs (FK-safe)', async () => {
+      // The instant flow is anonymous, so the payment row must not reference
+      // a fake organization/user — placeholder IDs violate the FKs and made
+      // every instant payment fail to record (the bug being fixed).
+      const body = JSON.stringify({
+        event: 'order.paid',
+        payload: {
+          order: { entity: { id: 'order_inst_456', amount: 900, currency: 'INR' } },
+        },
+      });
+      const res = await post(body, sign(body));
+      expect(res.status).toBe(200);
+      const upsertCall = prismaMock.payment.upsert.mock.calls[0][0];
+      expect(upsertCall.create.organizationId).toBeUndefined();
+      expect(upsertCall.create.userId).toBeUndefined();
     });
 
     it('marks a captured payment SUCCESS on payment.captured', async () => {
@@ -197,6 +217,41 @@ describe('POST /api/webhooks/razorpay', () => {
           data: expect.objectContaining({ paymentType: 'SUBSCRIPTION', status: 'SUCCESS' }),
         })
       );
+    });
+
+    it('does not double-record the activation payment when the event is redelivered', async () => {
+      prismaMock.subscription.findFirst.mockResolvedValue({
+        id: 'sub_db_1',
+        organizationId: 'org_1',
+        userId: 'user_1',
+        amount: 29900,
+        currency: 'INR',
+        status: 'PENDING',
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-01-31'),
+      });
+      // A payment for this subscription was already recorded within the hour
+      // (e.g. by the first delivery of this same event).
+      prismaMock.payment.findFirst.mockResolvedValue({ id: 'pay_existing' });
+      const body = JSON.stringify({
+        event: 'subscription.activated',
+        payload: {
+          subscription: {
+            entity: { id: 'sub_rzp_1', status: 'active', start_at: 1700000000, end_at: 1702592000 },
+          },
+        },
+      });
+      const res = await post(body, sign(body));
+      expect(res.status).toBe(200);
+      expect(prismaMock.payment.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            subscriptionId: 'sub_db_1',
+            paymentType: 'SUBSCRIPTION',
+          }),
+        })
+      );
+      expect(prismaMock.payment.create).not.toHaveBeenCalled();
     });
   });
 

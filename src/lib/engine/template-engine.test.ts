@@ -18,6 +18,12 @@ vi.mock('@/lib/prisma', () => ({
     templateVersion: {
       create: vi.fn(),
     },
+    subscription: {
+      findFirst: vi.fn(),
+    },
+    organization: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -642,6 +648,73 @@ describe('TemplateEngine', () => {
       const result = await TemplateEngine.getCategories();
 
       expect(result).toEqual([]);
+    });
+  });
+
+  // ─── sanitizeTemplateForCaller / premium paywall ────────────────────
+
+  describe('sanitizeTemplateForCaller', () => {
+    const premiumTemplate = {
+      id: 't1',
+      name: 'Premium Doc',
+      slug: 'premium-doc',
+      htmlTemplate: '<html><body>SECRET</body></html>',
+      placeholders: ['Name'],
+      variables: [{ key: 'Name', label: 'Name' }],
+      content: { name: 'x' },
+      isPremium: true,
+      visibility: 'PREMIUM',
+    };
+
+    beforeEach(() => {
+      (prisma.subscription.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (prisma.organization.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    });
+
+    it('leaves non-premium templates untouched', async () => {
+      const result = await TemplateEngine.sanitizeTemplateForCaller(
+        { ...premiumTemplate, isPremium: false },
+        null
+      );
+      expect(result.htmlTemplate).toBe('<html><body>SECRET</body></html>');
+    });
+
+    it('strips paywalled fields for a signed-in free user', async () => {
+      const result = await TemplateEngine.sanitizeTemplateForCaller(
+        premiumTemplate,
+        { user: { role: 'USER', organizationId: 'org_1' } }
+      );
+      expect(result.htmlTemplate).toBeUndefined();
+      expect(result.placeholders).toBeUndefined();
+      expect(result.variables).toBeUndefined();
+      expect(result.content).toBeUndefined();
+      // Metadata kept so the UI can render a lock card
+      expect(result.name).toBe('Premium Doc');
+      expect(result.isPremium).toBe(true);
+    });
+
+    it('keeps full content for an anonymous admin (admins manage templates)', async () => {
+      const result = await TemplateEngine.sanitizeTemplateForCaller(premiumTemplate, {
+        user: { role: 'ADMIN', organizationId: 'org_1' },
+      });
+      expect(result.htmlTemplate).toBe('<html><body>SECRET</body></html>');
+    });
+
+    it('keeps full content for an org with an active premium subscription', async () => {
+      (prisma.subscription.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'sub_1',
+        status: 'ACTIVE',
+        endDate: new Date(Date.now() + 86400_000),
+      });
+      const result = await TemplateEngine.sanitizeTemplateForCaller(premiumTemplate, {
+        user: { role: 'USER', organizationId: 'org_1' },
+      });
+      expect(result.htmlTemplate).toBe('<html><body>SECRET</body></html>');
+    });
+
+    it('strips for an anonymous caller (no session)', async () => {
+      const result = await TemplateEngine.sanitizeTemplateForCaller(premiumTemplate, null);
+      expect(result.htmlTemplate).toBeUndefined();
     });
   });
 });

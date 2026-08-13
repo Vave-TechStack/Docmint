@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 
 // Mock the document pipeline so no real HTML/DOCX generation or DB lookups
 // happen; the test only exercises the route's gating and flow.
-const { engineMocks, templateMocks, docxMocks } = vi.hoisted(() => ({
+const { engineMocks, templateMocks, docxMocks, prismaMocks } = vi.hoisted(() => ({
   engineMocks: {
     generateFromTemplate: vi.fn(),
     wrapStyledHtml: vi.fn((html: string) => html),
@@ -14,6 +14,11 @@ const { engineMocks, templateMocks, docxMocks } = vi.hoisted(() => ({
   },
   docxMocks: {
     generate: vi.fn(),
+  },
+  prismaMocks: {
+    updateMany: vi.fn(),
+    findUnique: vi.fn(),
+    create: vi.fn(),
   },
 }));
 
@@ -27,6 +32,9 @@ vi.mock('@/lib/data/sample-templates', () => ({
 }));
 vi.mock('@/lib/docx/docx-generator', () => ({
   DOCXGenerator: { generate: docxMocks.generate },
+}));
+vi.mock('@/lib/prisma', () => ({
+  prisma: { payment: prismaMocks },
 }));
 
 import { POST } from './route';
@@ -49,10 +57,18 @@ const VALID_PAYLOAD = {
   signature: 'sig_1',
 };
 
+// Unique client IP per request so the in-memory per-IP rate limiter
+// (10/min) can never trip across tests in this file.
+let ipSeed = 0;
+function nextIp(): string {
+  ipSeed += 1;
+  return `10.1.0.${(ipSeed % 250) + 1}`;
+}
+
 function post(body: unknown): Promise<Response> {
   const request = new NextRequest('http://localhost:3000/api/instant/download', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': nextIp() },
     body: JSON.stringify(body),
   });
   return POST(request);
@@ -65,7 +81,10 @@ describe('POST /api/instant/download', () => {
     // resetAllMocks clears call history AND implementations on both vi.fn()
     // hoisted mocks and spies, so no state can leak between tests.
     vi.resetAllMocks();
-    verifySpy = vi.spyOn(PaymentService, 'verifyPaymentAsync');
+    verifySpy = vi.spyOn(PaymentService, 'verifyInstantDownloadPayment');
+    // Default: a fresh payment that hasn't been consumed and whose webhook
+    // already recorded it (normal successful flow).
+    prismaMocks.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('rejects requests missing payment fields with 400 before any work happens', async () => {
@@ -98,7 +117,7 @@ describe('POST /api/instant/download', () => {
     expect(engineMocks.generateFromTemplate).not.toHaveBeenCalled();
   });
 
-  it('generates a PDF document for a verified payment', async () => {
+  it('generates a PDF document for a verified payment and consumes it once', async () => {
     verifySpy.mockResolvedValue(true);
     templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
     engineMocks.generateFromTemplate.mockResolvedValue('<html>Acme Corp</html>');
@@ -111,10 +130,61 @@ describe('POST /api/instant/download', () => {
       expect.objectContaining({ title: 'Test Template', slug: 'test-template', format: 'pdf' })
     );
     expect(verifySpy).toHaveBeenCalledWith('order_1', 'pay_1', 'sig_1');
+    // The payment row must be atomically marked used.
+    expect(prismaMocks.updateMany).toHaveBeenCalledWith({
+      where: { razorpayPaymentId: 'pay_1', usedAt: null },
+      data: { usedAt: expect.any(Date) },
+    });
     expect(templateMocks.resolveTemplateWithFallback).toHaveBeenCalledWith('tpl_1');
     expect(engineMocks.generateFromTemplate).toHaveBeenCalledWith(FAKE_TEMPLATE, {
       CompanyName: 'Acme Corp',
     });
+  });
+
+  it('rejects a replayed payment (already consumed) with 409 and no document', async () => {
+    verifySpy.mockResolvedValue(true);
+    prismaMocks.updateMany.mockResolvedValue({ count: 0 });
+    prismaMocks.findUnique.mockResolvedValue({ usedAt: new Date() });
+    templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
+
+    const res = await post(VALID_PAYLOAD);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('already been used');
+    expect(engineMocks.generateFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('records + consumes the payment when the webhook has not landed yet', async () => {
+    verifySpy.mockResolvedValue(true);
+    prismaMocks.updateMany.mockResolvedValue({ count: 0 });
+    prismaMocks.findUnique.mockResolvedValue(null);
+    prismaMocks.create.mockResolvedValue({});
+    templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
+
+    const res = await post(VALID_PAYLOAD);
+    expect(res.status).toBe(200);
+    expect(prismaMocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          razorpayOrderId: 'order_1',
+          razorpayPaymentId: 'pay_1',
+          status: 'SUCCESS',
+          paymentType: 'INSTANT_DOWNLOAD',
+          usedAt: expect.any(Date),
+        }),
+      })
+    );
+    expect(engineMocks.generateFromTemplate).toHaveBeenCalled();
+  });
+
+  it('rejects when two requests race to consume the same payment', async () => {
+    verifySpy.mockResolvedValue(true);
+    prismaMocks.updateMany.mockResolvedValue({ count: 0 });
+    prismaMocks.findUnique.mockResolvedValue(null);
+    prismaMocks.create.mockRejectedValue(new Error('Unique constraint failed'));
+
+    const res = await post(VALID_PAYLOAD);
+    expect(res.status).toBe(409);
+    expect(engineMocks.generateFromTemplate).not.toHaveBeenCalled();
   });
 
   it('returns a DOCX binary for a verified docx payment', async () => {

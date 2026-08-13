@@ -3,6 +3,10 @@ import type { AIGenerationRequest, AIGenerationResponse } from '@/types';
 /**
  * DocMint AI Engine
  * Powers content generation, rewriting, translation, and auto-fill.
+ *
+ * NOTE: Currently unused (no route or UI calls AIEngine). The OPENAI_API_KEY /
+ * GEMINI_API_KEY env vars were removed from .env as dead config. If the AI
+ * feature is wired up, re-add the keys first.
  */
 export class AIEngine {
   private static apiKey = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || '';

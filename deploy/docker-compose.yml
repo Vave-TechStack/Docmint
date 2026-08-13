@@ -6,8 +6,29 @@
 version: '3.8'
 
 services:
+  # ─── Schema Sync Runner (one-shot) ───
+  # Applies the Prisma schema to the live database before the app starts,
+  # so schema changes (like the payments FK nullability fix) can't drift again.
+  # Reuses the built image — it already contains the prisma CLI and schema.
+  migrate:
+    image: docmint:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: docmint-migrate
+    restart: "no"
+    working_dir: /app/prisma
+    command: ["npx", "prisma", "db", "push", "--skip-generate"]
+    env_file:
+      - ../.env
+    environment:
+      - NODE_ENV=production
+    networks:
+      - docmint-network
+
   # ─── Next.js Application ───
   nextjs:
+    image: docmint:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -15,6 +36,9 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL}
@@ -29,7 +53,7 @@ services:
     networks:
       - docmint-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health.txt"]
       interval: 30s
       timeout: 10s
       retries: 3

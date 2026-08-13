@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import crypto from 'crypto';
 import type { CompanyProfileData } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ vi.mock('@/lib/utils/image-placeholders', () => ({
 // Imports
 // ---------------------------------------------------------------------------
 
-import { wrapStyledHtml, DocumentEngine } from './document-engine';
+import { wrapStyledHtml, DocumentEngine, sanitizeDocumentHtml } from './document-engine';
 import { prisma } from '@/lib/prisma';
 
 // ---------------------------------------------------------------------------
@@ -653,6 +654,80 @@ describe('DocumentEngine', () => {
     });
   });
 
+  // ─── sanitizeDocumentHtml ───────────────────────────────
+
+  describe('sanitizeDocumentHtml', () => {
+    it('removes script tags (block + self-closing + nested case)', () => {
+      expect(sanitizeDocumentHtml('<p>hi</p><script>alert(1)</script>')).toBe('<p>hi</p>');
+      expect(sanitizeDocumentHtml('<script src="https://evil.com/x.js"></script>ok')).toBe('ok');
+      expect(sanitizeDocumentHtml('<SCRIPT>alert(1)</SCRIPT>ok')).toBe('ok');
+    });
+
+    it('removes iframe, object, embed, base, link, and meta elements', () => {
+      const input =
+        '<div>x</div><iframe src="https://evil.com"></iframe><object data="x"></object>' +
+        '<embed src="x"><base href="https://evil.com"><link rel="stylesheet" href="x.css">' +
+        '<meta http-equiv="refresh" content="0;url=https://evil.com">';
+      const out = sanitizeDocumentHtml(input);
+      expect(out).toContain('<div>x</div>');
+      expect(out).not.toContain('iframe');
+      expect(out).not.toContain('object');
+      expect(out).not.toContain('embed');
+      expect(out).not.toContain('<base');
+      expect(out).not.toContain('<link');
+      expect(out).not.toContain('<meta');
+    });
+
+    it('removes on* event-handler attributes', () => {
+      const out = sanitizeDocumentHtml('<img src="x.png" onerror="alert(1)" onload="evil()" alt="a">');
+      expect(out).not.toContain('onerror');
+      expect(out).not.toContain('onload');
+      expect(out).toContain('<img src="x.png"');
+      expect(out).toContain('alt="a"');
+    });
+
+    it('neutralizes javascript:, vbscript:, and data:text/html URLs in href/src', () => {
+      expect(sanitizeDocumentHtml('<a href="javascript:alert(1)">x</a>')).not.toContain('javascript:');
+      expect(sanitizeDocumentHtml('<a href="JaVaScRiPt:alert(1)">x</a>')).not.toContain('JaVaScRiPt');
+      expect(sanitizeDocumentHtml('<img src="vbscript:msgbox(1)">')).not.toContain('vbscript:');
+      expect(sanitizeDocumentHtml('<iframe src="data:text/html,<script>1</script>">')).not.toContain('data:text/html');
+      expect(sanitizeDocumentHtml('<a href="https://safe.com">ok</a>')).toContain('https://safe.com');
+    });
+
+    it('strips style attributes smuggling url(javascript:)', () => {
+      const out = sanitizeDocumentHtml('<div style="background:url(javascript:alert(1))">x</div>');
+      expect(out).not.toContain('javascript:');
+    });
+
+    it('keeps legitimate document HTML intact (tables, styles, SVG, data-URI images)', () => {
+      const legit =
+        '<table><tr><td style="color:red">A</td></tr></table>' +
+        '<style>.x{font-weight:bold}</style>' +
+        '<svg width="10"><circle cx="5" cy="5" r="4"/></svg>' +
+        '<img src="data:image/svg+xml;base64,PHN2Zz4=" alt="logo">';
+      const out = sanitizeDocumentHtml(legit);
+      expect(out).toContain('<table>');
+      expect(out).toContain('<style>.x{font-weight:bold}</style>');
+      expect(out).toContain('<svg');
+      expect(out).toContain('data:image/svg+xml');
+      expect(out).toContain('style="color:red"');
+    });
+  });
+
+  it('generateFromTemplate sanitizes script in template HTML', async () => {
+    const template = { htmlTemplate: '<p>{{Name}}</p><script>alert(1)</script>' };
+    const result = await DocumentEngine.generateFromTemplate(template, { Name: 'Alice' });
+    expect(result).toBe('<p>Alice</p>');
+  });
+
+  it('generateFromTemplate sanitizes script injected via variable values', async () => {
+    const template = { htmlTemplate: '<p>{{Name}}</p>' };
+    const result = await DocumentEngine.generateFromTemplate(template, {
+      Name: 'Alice<img src=x onerror=alert(1)>',
+    });
+    expect(result).toBe('<p>Alice<img src=x></p>');
+  });
+
   // ─── createShare ─────────────────────────────────────────
 
   describe('createShare', () => {
@@ -803,6 +878,43 @@ describe('DocumentEngine', () => {
       });
 
       const result = await DocumentEngine.getSharedDocument('pw-protected', 'wrong-password');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid password');
+    });
+
+    it('should accept the correct bcrypt password', async () => {
+      const hash = await DocumentEngine.hashSharePassword('secret');
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        password: hash,
+      });
+
+      const result = await DocumentEngine.getSharedDocument('pw-protected', 'secret');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should still accept legacy unsalted SHA-256 hashes (pre-upgrade rows)', async () => {
+      const legacy = crypto.createHash('sha256').update('oldpass').digest('hex');
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        password: legacy,
+      });
+
+      const result = await DocumentEngine.getSharedDocument('pw-protected', 'oldpass');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should not accept a legacy SHA-256 hash with the wrong password', async () => {
+      const legacy = crypto.createHash('sha256').update('oldpass').digest('hex');
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        password: legacy,
+      });
+
+      const result = await DocumentEngine.getSharedDocument('pw-protected', 'wrong');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Invalid password');

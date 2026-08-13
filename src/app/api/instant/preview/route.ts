@@ -2,12 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { TemplateEngine } from '@/lib/engine/template-engine';
 import { DocumentEngine } from '@/lib/engine/document-engine';
 import { validateImageVariables } from '@/lib/utils/image-upload';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 // Prevent static rendering - this route needs to call the database
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
+    // Abuse guard: rendering is CPU-heavy, so cap previews per IP.
+    const ip = getClientIp(request);
+    if (!checkRateLimit(`preview:${ip}`, 30, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many preview requests. Please slow down.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { templateId, variables } = body;
 
@@ -33,6 +43,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'Template not found' },
         { status: 404 }
+      );
+    }
+
+    // Premium templates are sold through the Template Library behind the
+    // Premium subscription — block the free ₹9 preview flow so it can't be
+    // used to extract premium template content without paying.
+    if (template.isPremium) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Premium templates require a DocMint Premium subscription. Get this template from the Template Library.',
+        },
+        { status: 403 }
       );
     }
 

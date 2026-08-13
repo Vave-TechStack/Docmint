@@ -12,6 +12,58 @@ import { SYSTEM_PLACEHOLDERS } from '@/lib/utils/constants';
 import { getDefaultImageForPlaceholder, isImagePlaceholder, isValidImageSource, replaceSvgDataUris } from '@/lib/utils/image-placeholders';
 import { extractPlaceholders as detectPlaceholders } from '@/lib/utils/placeholders';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
+
+/**
+ * Server-side HTML sanitizer for generated documents.
+ *
+ * Templates are user-generated HTML, and a malicious PUBLIC template could
+ * embed script that runs when a victim opens a downloaded/previewed document
+ * (browser previews are already sandboxed without allow-scripts, but the
+ * downloaded .html file is not). Variable values are also interpolated raw.
+ * This conservative pass neutralizes script execution vectors while keeping
+ * everything legitimate documents need (tables, styles, SVG, data-URI images):
+ *
+ *  - removes <script>, <iframe>, <object>, <embed>, <base>, <link>, <meta>
+ *  - removes all on* event-handler attributes
+ *  - neutralizes javascript:/vbscript:/data:text/html URLs in href/src
+ *  - strips style attributes that smuggle url(javascript:)
+ *
+ * Regex-based by design (no DOM dependency server-side); it complements, not
+ * replaces, the client-side DOMPurify pass used by the designer export.
+ */
+export function sanitizeDocumentHtml(html: string): string {
+  if (!html) return html;
+
+  let out = html;
+
+  // 1. Drop executable/embedding elements entirely (paired + self-closing).
+  out = out.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
+  out = out.replace(/<script\b[^>]*\/?>/gi, '');
+  out = out.replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe\s*>/gi, '');
+  out = out.replace(/<iframe\b[^>]*\/?>/gi, '');
+  out = out.replace(/<object\b[^>]*>[\s\S]*?<\/object\s*>/gi, '');
+  out = out.replace(/<object\b[^>]*\/?>/gi, '');
+  out = out.replace(/<embed\b[^>]*\/?>/gi, '');
+  out = out.replace(/<base\b[^>]*\/?>/gi, '');
+  out = out.replace(/<link\b[^>]*\/?>/gi, '');
+  out = out.replace(/<meta\b[^>]*\/?>/gi, '');
+
+  // 2. Remove event-handler attributes (onclick, onerror, onload, …).
+  out = out.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+
+  // 3. Neutralize dangerous URL schemes in href/src (case/whitespace tolerant).
+  out = out.replace(/(href|src)\s*=\s*(['"]?)\s*javascript\s*:/gi, '$1=$2#');
+  out = out.replace(/(href|src)\s*=\s*(['"]?)\s*vbscript\s*:/gi, '$1=$2#');
+  out = out.replace(/(href|src)\s*=\s*(['"]?)\s*data\s*:\s*text\/html/gi, '$1=$2#');
+
+  // 4. Strip style attributes smuggling url(javascript:...).
+  out = out.replace(/style\s*=\s*("[^"]*"|'[^']*')/gi, (match) =>
+    /url\s*\(\s*['"]?\s*(javascript|vbscript)\s*:/i.test(match) ? '' : match
+  );
+
+  return out;
+}
 
 /**
  * Extract the body content and <style> tags from a full HTML document.
@@ -456,7 +508,9 @@ export class DocumentEngine {
     let html = template.htmlTemplate || '';
     const context: PlaceholderContext = { customValues: { ...companyProfile, ...variables } };
     html = this.resolvePlaceholders(html, context);
-    return html;
+    // Sanitize AFTER resolution — template HTML and client-supplied variable
+    // values both flow into the final document, and either could carry script.
+    return sanitizeDocumentHtml(html);
   }
 
   static async generatePreview(
@@ -470,8 +524,31 @@ export class DocumentEngine {
     return crypto.randomBytes(24).toString('hex');
   }
 
-  private static hashSharePassword(password: string): string {
-    return crypto.createHash('sha256').update(password).digest('hex');
+  /**
+   * Hash a share password with bcrypt (salted, slow) before storing it on the
+   * DocumentShare row. Public so the share download route can hash without
+   * reimplementing it.
+   */
+  static async hashSharePassword(password: string): Promise<string> {
+    return bcrypt.hash(password, 10);
+  }
+
+  /**
+   * Verify a share password against the stored hash. New hashes are bcrypt;
+   * pre-upgrade rows stored unsalted SHA-256 hex (64 chars) — those are still
+   * accepted so existing password-protected shares keep working, but any new
+   * share (or password change) is bcrypt.
+   */
+  static async verifySharePassword(
+    password: string,
+    storedHash: string | null | undefined
+  ): Promise<boolean> {
+    if (!storedHash) return false;
+    if (/^[a-f0-9]{64}$/i.test(storedHash)) {
+      const legacy = crypto.createHash('sha256').update(password).digest('hex');
+      return legacy === storedHash;
+    }
+    return bcrypt.compare(password, storedHash);
   }
 
   static async createShare(
@@ -487,7 +564,7 @@ export class DocumentEngine {
     const share = await prisma.documentShare.create({
       data: {
         documentId, shareType: options.shareType, recipient: options.recipient || null, token,
-        password: options.password ? this.hashSharePassword(options.password) : null, expiresAt,
+        password: options.password ? await this.hashSharePassword(options.password) : null, expiresAt,
         maxDownloads: options.maxDownloads || null, downloadCount: 0, isActive: true,
       },
     });
@@ -526,8 +603,8 @@ export class DocumentEngine {
     if (share.maxDownloads && share.downloadCount >= share.maxDownloads) return { success: false, error: 'Maximum downloads reached' };
     if (share.password) {
       if (!password) return { success: false, requiresPassword: true, shareId: share.id };
-      const hashedInput = this.hashSharePassword(password);
-      if (hashedInput !== share.password) return { success: false, error: 'Invalid password' };
+      const ok = await this.verifySharePassword(password, share.password);
+      if (!ok) return { success: false, error: 'Invalid password' };
     }
     return { success: true, data: share.document, share };
   }
