@@ -13,6 +13,7 @@ RUN rm -rf /etc/nginx/conf.d/default.conf
 # Copy custom NGINX config
 COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY deploy/nginx/webhook-security.conf /etc/nginx/webhook-security.conf
+COPY deploy/nginx/security-headers.conf /etc/nginx/security-headers.conf
 
 # Create cache directory with proper permissions
 RUN mkdir -p /var/cache/nginx && \
