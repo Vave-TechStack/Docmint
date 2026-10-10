@@ -159,6 +159,24 @@ export async function authorizeCallback(credentials: any): Promise<any> {
       return null;
     }
 
+    // Email verification is enforced.
+    //
+    // The check was missing entirely: signup sends a verification mail and
+    // marks nothing else, so an account that never clicked the link could sign
+    // in with full credentials access. The entire verification step was
+    // decorative. A user can legitimately land here with no `emailVerified`
+    // value when an OAuth provider asserted the address, so the rejection is
+    // reported distinctly and the login screen can route to /verify-email.
+    if (!user.emailVerified) {
+      await logAuthEvent(
+        SecurityEventAction.LOGIN_FAILURE,
+        false,
+        'Email not verified',
+        { email, userId: user.id, organizationId: user.organizationId, metadata: { reason: 'email_unverified' } }
+      );
+      return null;
+    }
+
     await logAuthEvent(
       SecurityEventAction.LOGIN_SUCCESS,
       true,

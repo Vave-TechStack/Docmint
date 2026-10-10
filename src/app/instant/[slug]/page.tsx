@@ -325,10 +325,10 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
   const performDownload = async (
     format: 'pdf' | 'docx',
     payment: { paymentId: string; orderId: string; signature: string }
-  ) => {
+  ): Promise<boolean> => {
     if (!template) {
       toast.error('Template not found. Please reload the page.');
-      return;
+      return false;
     }
     setDownloading(true);
     try {
@@ -345,9 +345,9 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ error: 'Download failed' }));
         toast.error(err.error || 'Download failed');
-        return;
+        return false;
       }
 
       // For DOCX: server returns binary blob (direct download)
@@ -367,15 +367,17 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
         const data = await res.json();
         if (!data.success || !data.data?.html) {
           toast.error(data.error || 'Failed to generate document');
-          return;
+          return false;
         }
         const { html } = data.data;
         await generatePDFClientSide(html, `${template.slug || template.name}.pdf`);
       }
 
       toast.success('Download complete!');
+      return true;
     } catch {
       toast.error('Download failed. Please try again.');
+      return false;
     } finally {
       setDownloading(false);
     }
@@ -433,13 +435,26 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
     };
     // Store in ref immediately (no React state lag)
     paymentDetailsRef.current = payment;
-    setPaid(true);
-    setPaymentDetails(payment);
 
-    toast.success('Payment successful! Downloading your document...');
+    // Do NOT mark the document as paid yet.
+    //
+    // The client callback only proves Razorpay opened its window; the server
+    // still has to verify the signature, confirm the payment was captured at
+    // exactly ₹9, and atomically claim the one-time payment. Setting `paid`
+    // here showed "Payment confirmed! / Your document is ready" even when
+    // /api/instant/download returned 400 or 409 — a customer who had been
+    // charged was told everything was fine and then given no file.
+    toast.success('Payment received. Verifying and preparing your document...');
 
-    // Auto-download right after payment
-    await performDownload(downloadFormat, payment);
+    const ok = await performDownload(downloadFormat, payment);
+    if (ok) {
+      setPaid(true);
+      setPaymentDetails(payment);
+    } else {
+      // performDownload already surfaced the specific reason.
+      setPaid(false);
+      paymentDetailsRef.current = null;
+    }
   };
 
   // ─── Manual download button (uses ref for reliable payment details) ───

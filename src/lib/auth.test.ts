@@ -668,7 +668,10 @@ describe('authorizeCallback', () => {
     });
   });
 
-  it('should return user object with null emailVerified when user has no emailVerified', async () => {
+  it('should REJECT an unverified email even with valid credentials', async () => {
+    // Regression: email verification was previously not enforced at all, so
+    // an account that never clicked its verification link could sign in with
+    // full access. The check is now performed after the password comparison.
     const mockUser = {
       id: 'user-2',
       email: 'noverify@example.com',
@@ -689,15 +692,41 @@ describe('authorizeCallback', () => {
       password: 'pass123',
     });
 
+    expect(result).toBeNull();
+    // The password was still checked, so the rejection is not a timing oracle.
+    expect(mockBcryptCompare).toHaveBeenCalled();
+  });
+
+  it('should return the user when emailVerified is set', async () => {
+    const mockUser = {
+      id: 'user-3',
+      email: 'verified@example.com',
+      name: 'Verified',
+      image: null,
+      passwordHash: '$2a$10$hash',
+      isActive: true,
+      organizationId: 'org-1',
+      organization: { name: 'Org' },
+      role: 'USER',
+      emailVerified: new Date('2026-01-01T00:00:00Z'),
+    };
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(mockUser);
+    mockBcryptCompare.mockResolvedValue(true);
+
+    const result = await authorizeCallback({
+      email: 'verified@example.com',
+      password: 'pass123',
+    });
+
     expect(result).toEqual({
-      id: 'user-2',
-      email: 'noverify@example.com',
-      name: 'No Verify',
+      id: 'user-3',
+      email: 'verified@example.com',
+      name: 'Verified',
       image: null,
       organizationId: 'org-1',
       organizationName: 'Org',
       role: 'USER',
-      emailVerified: null,
+      emailVerified: '2026-01-01T00:00:00.000Z',
     });
   });
 

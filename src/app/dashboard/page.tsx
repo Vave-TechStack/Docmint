@@ -169,7 +169,7 @@ export default function DashboardPage() {
               {recentDocs.map((doc) => (
                 <Link
                   key={doc.id}
-                  href={`/documents/${doc.id}`}
+                  href={`/documents/${doc.id}/edit`}
                   className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-center space-x-3">
