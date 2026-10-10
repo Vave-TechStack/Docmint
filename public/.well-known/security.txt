@@ -1,0 +1,7 @@
+Contact: mailto:support@docmint.com
+Expires: 2027-09-30T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://docmint.com/.well-known/security.txt
+Policy: https://docmint.com/security-policy
+Hiring: https://docmint.com/careers
+Acknowledgments: https://docmint.com/security-hall-of-fame

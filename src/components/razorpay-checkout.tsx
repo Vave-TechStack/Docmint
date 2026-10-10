@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
+import { getCspNonce } from '@/lib/security/csp-nonce';
 import { Loader2, CreditCard, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
 
 declare global {
@@ -39,6 +40,14 @@ interface RazorpayInstance {
   close: () => void;
   on: (event: string, handler: () => void) => void;
 }
+
+/**
+ * How long to wait for `checkout.js` before giving up.
+ *
+ * 15s is comfortably above a slow-but-working mobile connection and well below
+ * the point where a user concludes the button is broken.
+ */
+const SCRIPT_LOAD_TIMEOUT_MS = 15_000;
 
 interface RazorpayCheckoutProps {
   /** Amount in paise (e.g., ₹9 = 900) */
@@ -88,57 +97,150 @@ export function RazorpayCheckout({
   const [state, setState] = useState<'idle' | 'loading' | 'processing' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
 
-  const loadRazorpayScript = useCallback(() => {
-    return new Promise<boolean>((resolve) => {
-      if (typeof window !== 'undefined' && window.Razorpay) {
-        resolve(true);
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-      script.async = true;
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-  }, []);
+  /**
+ * Loads the Razorpay Checkout script once, with an explicit timeout.
+ *
+ * Two defects this replaces:
+ *
+ * 1. No timeout. `script.onload` / `script.onerror` only fire if the network
+ *    stack eventually settles. A request that hangs — captive portal, silent
+ *    packet drop, ad blocker holding the request open — left the promise
+ *    pending forever, so the button stayed on "Preparing..." indefinitely with
+ *    no error and no way for the user to recover short of a reload. The
+ *    timeout rejects, which the caller turns into a real error state.
+ *
+ * 2. A rejected `loadRazorpayScript()` promise elsewhere in this component
+ *    would be an unhandled rejection; the helper below never rejects, so the
+ *    `await` in `handlePayment` is always safe.
+ *
+ * @param nonce optional CSP nonce for the injected tag. A dynamically created
+ *   `<script>` is NOT covered by `'strict-dynamic'` trust propagation in every
+ *   browser, so under a nonce-based policy it must carry the nonce explicitly.
+ *   Sourced from a trusted request context — see `useCspNonce`.
+ */
+function loadRazorpayScript(nonce?: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve(false);
+      return;
+    }
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
 
-  const handlePayment = useCallback(async () => {
+    // Guard against a double-injection when the user clicks twice quickly.
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[data-razorpay-checkout]'
+    );
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true), { once: true });
+      existing.addEventListener('error', () => resolve(false), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.dataset.razorpayCheckout = 'true';
+    if (nonce) script.nonce = nonce;
+
+    // Without this a hung request pins the promise forever and the UI hangs.
+    const timeout = window.setTimeout(() => {
+      script.remove();
+      resolve(false);
+    }, SCRIPT_LOAD_TIMEOUT_MS);
+
+    const finish = (result: boolean) => {
+      window.clearTimeout(timeout);
+      if (!result) script.remove();
+      resolve(result);
+    };
+
+    script.addEventListener('load', () => finish(true), { once: true });
+    script.addEventListener('error', () => finish(false), { once: true });
+
+    try {
+      document.body.appendChild(script);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+const handlePayment = useCallback(async () => {
+    // Guard against a double submission creating two orders. The button is also
+    // disabled while loading/processing, but a fast double-click can still
+    // dispatch twice before React re-renders.
+    if (state === 'loading' || state === 'processing') return;
+
     setState('loading');
     setErrorMsg('');
 
     try {
       // 1. Load Razorpay SDK
-      const loaded = await loadRazorpayScript();
+      const loaded = await loadRazorpayScript(getCspNonce());
       if (!loaded) {
         setState('error');
-        setErrorMsg('Failed to load payment gateway. Please check your internet connection.');
+        setErrorMsg(
+          'Could not reach the payment gateway. Check your connection, then try again. If this keeps happening the payment scripts may be blocked by your browser or network.'
+        );
         return;
       }
 
       // 2. Create order via our backend
-      const orderRes = await fetch('/api/payments/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, amount }),
-      });
-
-      const orderData = await orderRes.json();
-
-      if (!orderData.success) {
+      let orderRes: Response;
+      try {
+        orderRes = await fetch('/api/payments/create-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, amount }),
+        });
+      } catch {
         setState('error');
-        setErrorMsg(orderData.error || 'Failed to create payment order. Please try again.');
+        setErrorMsg('Network error while contacting the server. Please try again.');
+        onComplete?.();
         return;
       }
 
-      const order = orderData.data;
+      // A non-JSON error page (proxy 502, crash) would otherwise throw on
+      // `.json()` and surface as the generic catch-all below.
+      let orderData: Record<string, unknown>;
+      try {
+        orderData = (await orderRes.json()) as Record<string, unknown>;
+      } catch {
+        setState('error');
+        setErrorMsg('The server returned an unexpected response. Please try again.');
+        onComplete?.();
+        return;
+      }
+
+      if (!orderRes.ok || !orderData.success) {
+        setState('error');
+        setErrorMsg(
+          typeof orderData.error === 'string'
+            ? orderData.error
+            : 'Failed to create payment order. Please try again.'
+        );
+        onComplete?.();
+        return;
+      }
+
+      const order = orderData.data as Record<string, unknown> | undefined;
+      if (!order) {
+        setState('error');
+        setErrorMsg('Failed to create payment order. Please try again.');
+        onComplete?.();
+        return;
+      }
 
       // 3. Check if Razorpay public key is available
-      if (!order.key || order.key.includes('xxxxxxxx')) {
+      const orderKey = typeof order.key === 'string' ? order.key : '';
+      if (!orderKey || orderKey.includes('xxxxxxxx')) {
         setState('error');
         setErrorMsg(
           'Razorpay is not fully configured. Please set up your Razorpay API keys in the .env file.\n\n' +
-          'To fix: Go to Razorpay Dashboard → Settings → API Keys → Reveal Key Secret → add to .env'
+            'To fix: Go to Razorpay Dashboard → Settings → API Keys → Reveal Key Secret → add to .env'
         );
         return;
       }
@@ -147,12 +249,12 @@ export function RazorpayCheckout({
 
       // 4. Open Razorpay Checkout
       const options: RazorpayOptions = {
-        key: order.key,
-        amount: order.amount,
-        currency: order.currency || 'INR',
+        key: orderKey,
+        amount: typeof order.amount === 'number' ? order.amount : 0,
+        currency: typeof order.currency === 'string' ? order.currency : 'INR',
         name: 'DocMint',
         description,
-        order_id: order.id,
+        order_id: String(order.id ?? ''),
         prefill: {
           name: prefill?.name || '',
           email: prefill?.email || '',
@@ -163,6 +265,11 @@ export function RazorpayCheckout({
           backdrop_color: '#00000033',
         },
         handler: async (response) => {
+          // NOTE: this callback only reports that the *gateway* completed.
+          // It never marks the order paid on its own — the parent handler
+          // re-verifies `razorpay_signature` server-side against the Razorpay
+          // API before any entitlement is granted. Never trust these values
+          // client-side.
           setState('success');
           try {
             await onSuccess(response);
@@ -181,15 +288,21 @@ export function RazorpayCheckout({
         },
       };
 
-      const razorpay = new window.Razorpay(options);
-      razorpay.open();
+      try {
+        const razorpay = new window.Razorpay(options);
+        razorpay.open();
+      } catch {
+        setState('error');
+        setErrorMsg('The payment window could not be opened. Please try again.');
+        onComplete?.();
+      }
     } catch (err) {
       console.error('Payment error:', err);
       setState('error');
       setErrorMsg('An unexpected error occurred. Please try again.');
       onComplete?.();
     }
-  }, [amount, type, description, prefill, onSuccess, onComplete, loadRazorpayScript]);
+  }, [amount, type, description, prefill, onSuccess, onComplete, state]);
 
   const buttonLabel = label || (type === 'instant' ? 'Pay ₹9 & Download' : type === 'subscription' ? 'Pay ₹299 & Subscribe' : 'Pay Now');
 

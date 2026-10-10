@@ -2,16 +2,16 @@
 
 **Create Professional Business Documents in Seconds.**
 
-DocMint is a multi-tenant, AI-powered document generation platform. Pick a template, fill in the variables (or let AI draft them), and export a polished PDF or DOCX — offer letters, invoices, contracts, payslips, and 200+ document types across 12 categories. No login required for instant downloads; a premium subscription unlocks unlimited access.
+DocMint is a multi-tenant, AI-powered document generation platform. Pick a template, fill in the variables (or let AI draft them), and export a polished PDF or DOCX — offer letters, invoices, contracts, payslips, and other business documents across 12 categories. No login required for instant downloads; a premium subscription unlocks unlimited access.
 
 ---
 
 ## ✨ Features
 
-- **📄 Template Library** — 20+ professionally designed sample templates across 12 categories (Finance, Legal, Business, Marketing, Resume Builder, Education, Medical, Manufacturing, Real Estate, Certificates, General, HR Documents), seeded out of the box.
+- **📄 Template Library** — 30 professionally designed sample templates across 12 categories (Finance, Legal, Business, Marketing, Resume Builder, Education, Medical, Manufacturing, Real Estate, Certificates, General, HR Documents), seeded out of the box.
 - **⚡ Instant Download (₹9)** — Generate a document in seconds and pay via Razorpay, no account required (`/instant`).
 - **👑 Premium Subscription (₹299/mo)** — Unlimited access to premium templates, managed via subscriptions, coupons, and grace periods.
-- **🤖 AI Generation** — Automatic placeholder detection and AI-assisted content generation (OpenAI or Gemini, auto-detected by env vars).
+- **🤖 AI Generation (not yet wired up)** — `src/lib/ai/ai-engine.ts` implements placeholder detection and OpenAI/Gemini-backed generation, but **no route or UI calls it yet**. Treat the AI feature as unavailable until an endpoint is added.
 - **📝 Visual Payslip Designer** — Drag-and-drop canvas editor to design custom payslip layouts with live preview and HTML export (`/payslip-designer`).
 - **🔗 Document Management** — Folders, tags, versioning, and secure tokenized share links (`/share/[token]`).
 - **🏢 Multi-Tenant** — Organization-scoped row-level isolation with subdomain detection (`x-tenant-slug` header).
@@ -19,7 +19,7 @@ DocMint is a multi-tenant, AI-powered document generation platform. Pick a templ
 - **🛡️ Enterprise Security** — Security headers (CSP, HSTS, X-Frame-Options, Permissions-Policy) set in the edge proxy, bcrypt password hashing, JWT sessions, Razorpay webhook signature verification with IP allowlisting.
 - **🖥️ Admin Panel** — Dashboard, users, subscriptions, revenue, support tickets, coupons, blog, audit logs, and template management.
 - **📧 Transactional Email** — Verification and welcome emails via Resend.
-- **✅ Tested** — 459 unit tests across auth, engines, generators, and utilities (Vitest).
+- **✅ Tested** — 1129 unit tests across auth, engines, generators, and utilities (Vitest), plus a Playwright suite for staging browser validation.
 
 ---
 
@@ -46,7 +46,10 @@ DocMint is a multi-tenant, AI-powered document generation platform. Pick a templ
 
 - **Node.js** 20+ and npm
 - **PostgreSQL** 16 (or use the included docker-compose)
-- (Optional) **Redis** — included in docker-compose
+
+No cache or queue service is required. The dev compose file starts a Redis
+container, but nothing in the application connects to it — it is not a
+dependency.
 
 ### 1. Quick Start (Local)
 
@@ -76,7 +79,7 @@ Open [http://localhost:3000](http://localhost:3000) 🎉
 ### 2. Quick Start (Docker)
 
 ```bash
-# From the docker/ directory — starts Postgres, Redis, the app, and runs schema push
+# From the docker/ directory — starts Postgres, the app, and runs schema push
 docker compose -f docker/docker-compose.yml up --build
 ```
 
@@ -112,8 +115,8 @@ Copy `.env.example` to `.env` (or set them in your deployment). All `.env*` file
 | `GOOGLE_CLIENT_SECRET` | ⬜ | Google OAuth client secret |
 | `MICROSOFT_CLIENT_ID` | ⬜ | Enables Microsoft Entra ID login |
 | `MICROSOFT_CLIENT_SECRET` | ⬜ | Microsoft Entra ID client secret |
-| `OPENAI_API_KEY` | ⬜ | Enables AI generation via OpenAI (preferred if set) |
-| `GEMINI_API_KEY` | ⬜ | Enables AI generation via Gemini (used when `OPENAI_API_KEY` is absent) |
+| `OPENAI_API_KEY` | ⬜ | Enables AI generation via OpenAI (preferred if set). **Engine exists but is not currently called by any route.** |
+| `GEMINI_API_KEY` | ⬜ | Enables AI generation via Gemini (used when `OPENAI_API_KEY` is absent). **Not currently called by any route.** |
 | `RESEND_API_KEY` | ⬜ | Transactional email (verification, welcome) |
 | `RESEND_FROM_EMAIL` | ⬜ | Sender address for emails (defaults to `noreply@docmint.com`) |
 | `SUPPORT_EMAIL` | ⬜ | Support contact shown to users (defaults to `support@docmint.com`) |
@@ -133,7 +136,7 @@ Copy `.env.example` to `.env` (or set them in your deployment). All `.env*` file
 | `npm run build` | Production build |
 | `npm start` | Run the production build |
 | `npm run lint` | ESLint across the project |
-| `npm test` | Run the Vitest suite (459 tests) |
+| `npm test` | Run the Vitest suite (1129 tests) |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run test:coverage` | Vitest with coverage report |
 | `npm run db:seed` | Seed sample templates (`prisma/seed.ts`) |
@@ -155,23 +158,24 @@ src/
 │   ├── payslip-designer/   # Canvas, palette, properties panel, store
 │   └── ui/                 # Badge, Button, Card, Modal, Select…
 ├── lib/
-│   ├── ai/                 # OpenAI / Gemini engine
-│   ├── docx/               # DOCX generator
-│   ├── email/              # Resend email service
-│   ├── engine/             # Template & document engines
-│   ├── payment/            # Razorpay client
-│   ├── utils/              # Export, upload, pagination, placeholders…
-│   ├── auth.ts             # NextAuth config
-│   └── prisma.ts           # Prisma client (driver adapters)
-├── proxy.ts                # Edge proxy: security headers + tenant detection
-└── types/                  # Shared TypeScript types
+│   ├── security/            # Authorization guards, sanitization, CSP, crypto, logging
+│   ├── ai/                  # OpenAI / Gemini engine (not yet wired to any route)
+│   ├── docx/                # DOCX generator
+│   ├── email/               # Resend email service
+│   ├── engine/              # Template & document engines
+│   ├── payment/             # Razorpay client
+│   ├── utils/               # Export, upload, pagination, placeholders…
+│   ├── auth.ts              # NextAuth config
+│   └── prisma.ts            # Prisma client (driver adapters)
+├── proxy.ts                 # Edge proxy: security headers, CSP nonces, page auth gate
+└── types/                   # Shared TypeScript types
 
 prisma/
 ├── schema.prisma           # Multi-tenant data model
 ├── seed.ts                 # Sample template seeding
 └── seed-admin.ts           # Admin user seeding
 
-docker/                     # Dev docker-compose (postgres, redis, app)
+docker/                     # Dev docker-compose (postgres, app)
 deploy/                     # Production docker-compose + nginx config
 docs/                       # Architecture & OAuth setup guides
 ```
@@ -190,13 +194,17 @@ docs/                       # Architecture & OAuth setup guides
 | `/api/webhooks/razorpay` | Razorpay payment webhook (signature-verified) |
 | `/api/subscriptions` | Subscription plans & status |
 | `/api/company/profile` | Company branding profile |
+| `/api/contact` | Public contact form |
+| `/api/csp-report` | First-party CSP violation collector |
 | `/api/admin/*` | Admin dashboard, users, revenue, tickets, coupons, blog, audit logs, templates |
 
 ---
 
 ## 📚 Documentation
 
-- [Architecture & Design](./docs/ARCHITECTURE.md) — system design, data model, security, scalability
+- [Architecture & Design](./docs/ARCHITECTURE.md) — what is actually implemented today, and what is planned
+- [Token Lookup Proposal](./docs/TOKEN_LOOKUP_PROPOSAL.md) — indexed lookup design for verification/reset tokens
+- [Production Audit Baseline](./docs/PRODUCTION_AUDIT_BASELINE.md) — historical security audit and current status
 - [Google OAuth Setup](./docs/google-oauth-setup.md) — step-by-step Google login configuration
 - [Contributing](./CONTRIBUTING.md) — contribution guidelines
 
@@ -205,11 +213,33 @@ docs/                       # Architecture & OAuth setup guides
 ## 🧪 Testing
 
 ```bash
-npm test              # Run all 459 tests
+npm test              # Run all 1129 tests
 npm run test:coverage # Coverage report
+npm run test:e2e      # Playwright suite — requires STAGING_BASE_URL (see below)
 ```
 
 Tests cover the auth callbacks, template/document engines, DOCX & PDF generation, sample data integrity, and utility modules (export, upload, pagination, prisma-json, custom sections, image placeholders).
+
+### End-to-end tests
+
+The Playwright suite in `e2e/` validates behaviour that only exists in a real
+deployment — TLS termination, HSTS, the trusted-proxy chain and browser CSP
+enforcement — so it **requires a deployed staging origin** and will not start a
+server for you.
+
+```bash
+STAGING_BASE_URL=https://staging.example.com npm run test:e2e
+```
+
+- `STAGING_BASE_URL` is mandatory; the config refuses to run without it, and
+  refuses any host that looks like production or is not HTTPS.
+- Tests that create accounts or place orders are tagged `@destructive` and are
+  skipped unless `STAGING_ALLOW_DESTRUCTIVE=1`.
+- Credentials (`STAGING_SUPER_ADMIN_EMAIL`, `STAGING_PREMIUM_USER_EMAIL`,
+  `RAZORPAY_KEY_ID`, …) are read from the environment and never committed.
+  See `e2e/support/staging.ts` for the full list and the safety guards.
+
+53 tests run by default; 65 with destructive suites enabled.
 
 ---
 
@@ -227,9 +257,21 @@ A production setup lives in [`deploy/`](./deploy) (docker-compose + nginx with w
 
 ### Notes
 
-- The edge proxy (`src/proxy.ts`) sets security headers and tenant detection — keep it in mind when changing routing.
+- The edge proxy (`src/proxy.ts`) sets security headers, CSP nonces, and the page-level auth gate — keep it in mind when changing routing.
+- HSTS is emitted **only** by the proxy, and only when the request is verified as HTTPS. Set `TRUST_PROXY=true` in production when a reverse proxy overwrites `x-forwarded-proto`; leave it unset for local dev or the app port must not be directly reachable.
 - `NEXT_PUBLIC_*` variables are inlined at build time and must be set during the build.
 - Razorpay webhooks must point to `https://<your-domain>/api/webhooks/razorpay` with the matching `RAZORPAY_WEBHOOK_SECRET`.
+- Rate limiting is in-memory and per-process. It blunts abuse on a single instance but is **not** a distributed limiter — do not run multiple app replicas without an external limiter.
+
+---
+
+## ⚠️ Known limitations
+
+- **Rate limiting is per-process** (`src/lib/rate-limit.ts`). Limits do not hold across multiple replicas.
+- **Verification/reset token lookup** uses a bounded sweep of up to 50 unexpired tokens, so a valid token beyond that window is rejected. See [`docs/TOKEN_LOOKUP_PROPOSAL.md`](./docs/TOKEN_LOOKUP_PROPOSAL.md).
+- **Most pages are client components.** Only `/terms` and `/privacy` are React Server Components; every other page fetches its data from the browser.
+- **AI generation is not wired up.** The engine exists but nothing calls it.
+- The E2E suite has not been executed against a staging deployment as of this commit.
 
 ---
 

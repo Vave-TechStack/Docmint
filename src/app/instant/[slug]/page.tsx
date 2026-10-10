@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
 import { getDefaultImageForPlaceholder, replaceSvgDataUris, rasterizeSvgPlaceholders, isValidImageSource } from '@/lib/utils/image-placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
 import { ALLOWED_IMAGE_TYPES_ACCEPT, IMAGE_UPLOAD_MAX_MB } from '@/lib/utils/constants';
 import { validateImageUpload, isImageFieldKey } from '@/lib/utils/image-upload';
 import { injectCustomSections } from '@/lib/utils/custom-sections';
@@ -165,6 +166,22 @@ export default function InstantDownloadTemplatePage() {
       });
 
       /**
+       * Sanitize the resolved template BEFORE it is rendered or exported.
+       *
+       * `formValues` is interpolated raw (line 159), and the template HTML
+       * itself is user-authored, so both are attacker-controlled. The preview
+       * iframe currently relies on `sandbox="allow-same-origin"` *without*
+       * `allow-scripts` to stay inert — a single sandbox change, or the
+       * html2canvas path in generatePDFClientSide, would turn this into
+       * script execution in the DocMint origin. Sanitizing here makes the
+       * content safe regardless of the sink.
+       *
+       * Must run before replaceSvgDataUris, which promotes an inert
+       * <img src="data:image/svg+xml"> to live inline <svg>.
+       */
+      html = sanitizeHtmlFragment(html);
+
+      /**
        * Convert SVG data URI <img> tags to inline <svg> elements.
        *
        * Chrome/Chromium cannot load SVG data URIs in <img> tags inside
@@ -223,7 +240,9 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
 
   // ─── Client-side PDF generation using jsPDF (browser-native) ───
   const generatePDFClientSide = async (rawHtml: string, fileName: string): Promise<void> => {
-    let html = replaceSvgDataUris(rawHtml || '');
+    // Sanitize again on the export path: this HTML also reaches html2canvas
+    // inside jsPDF, and the export is a download rather than a sandboxed frame.
+    let html = replaceSvgDataUris(sanitizeHtmlFragment(rawHtml || ''));
     // jsPDF's doc.html() renders via html2canvas, which cannot load SVG images
     // in ANY form (inline <svg> logs "Error loading svg data:..."; base64 SVG
     // data-URI <img> tags log "Error loading image data:image/svg+xml;base64,...")

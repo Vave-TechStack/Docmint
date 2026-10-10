@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtDecrypt } from 'jose';
+import {
+  buildEnforcedCsp,
+  buildReportOnlyCsp,
+  buildReportingEndpointsHeader,
+  generateCspNonce,
+  reportOnlyEnabled,
+  resolveReportOrigin,
+} from '@/lib/security/csp';
+import { isVerifiedHttps } from '@/lib/security/trusted-proxy';
 
 /**
  * DocMint Edge Proxy
@@ -80,7 +89,13 @@ async function deriveAuthJsKey(secret: string, salt: string, length: number): Pr
  * tampered tokens (jwtDecrypt enforces exp and MAC/AEAD integrity).
  */
 async function isValidSessionToken(token: string, salt: string): Promise<boolean> {
-  if (!AUTH_SECRET) return true; // cannot verify — do not lock everyone out
+  // Fail CLOSED. Returning `true` here granted a valid session to ANY caller
+  // who merely presented a cookie whenever AUTH_SECRET was unset — an
+  // authentication bypass on every protected page, triggered by a missing
+  // env var rather than by any credential an attacker would have to supply.
+  // A misconfigured deploy must deny access and say so, not wave it through;
+  // `src/instrumentation.ts` already surfaces the missing secret loudly.
+  if (!AUTH_SECRET) return false;
   try {
     const headerJson = JSON.parse(base64UrlDecode(token.split('.')[0])) as { enc?: string };
     const length = headerJson.enc === 'A256GCM' ? 32 : 64; // A256CBC-HS512 needs 64 bytes
@@ -100,25 +115,44 @@ export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const response = NextResponse.next();
 
-  // ─── Security Headers ───
+  // Correlation id for the request. The security logger reads this header when
+  // recording an event, so a log line can be tied back to a specific request.
+  response.headers.set('x-request-id', crypto.randomUUID());
+
+// ─── Security Headers ───
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  response.headers.set(
-    'Content-Security-Policy',
-    [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.razorpay.com",
-      "style-src 'self' 'unsafe-inline' https://*.razorpay.com",
-      "img-src 'self' data: blob: https: https://*.razorpay.com",
-      "font-src 'self' data:",
-      "connect-src 'self' https://api.razorpay.com https://*.razorpay.com https://api.openai.com",
-      "frame-src 'self' https://*.razorpay.com",
-    ].join('; ')
-  );
-  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  response.headers.set('X-XSS-Protection', '1; mode=block');
-  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  response.headers.set('Content-Security-Policy', buildEnforcedCsp());
+
+  // Report-only candidate policy. Reported, never enforced — it may be as
+  // strict as the target state because violations do not block anything. The
+  // nonce it carries is intentionally not propagated to the request headers:
+  // doing so is what flips routes to dynamic rendering, which is not approved
+  // yet. See `src/lib/security/csp.ts` for the full rationale.
+  if (reportOnlyEnabled()) {
+    response.headers.set('Content-Security-Policy-Report-Only', buildReportOnlyCsp(generateCspNonce()));
+    // Omitted entirely when no trustworthy public origin exists, rather than
+    // advertising an unreachable loopback address.
+    const reportOrigin = resolveReportOrigin(req);
+    if (reportOrigin) {
+      response.headers.set('Reporting-Endpoints', buildReportingEndpointsHeader(reportOrigin));
+    }
+  }
+
+  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  // HSTS ownership lives HERE and nowhere else. `next.config.ts` used to set
+  // the same header on `/(.*)` unconditionally, which overrode this logic and
+  // asserted HTTPS pinning even for plain-HTTP requests.
+  //
+  // It is emitted only when the request provably arrived over HTTPS. A
+  // client-supplied `x-forwarded-proto: https` is not sufficient — that header
+  // is forgeable whenever the app is directly reachable — so the proxy must be
+  // declared trusted (`TRUST_PROXY=true`) before it is believed at all.
+  // No `includeSubDomains`/`preload` until domain-wide HTTPS is verified.
+  if (isVerifiedHttps(req)) {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000');
+  }
 
   // ─── Multi-tenant subdomain extraction ───
   const host = req.headers.get('host') || '';

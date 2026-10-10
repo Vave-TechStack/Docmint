@@ -1,23 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { requireAdmin, scopeWhere } from '@/lib/security/authorization';
+import { parsePagination, cleanString } from '@/lib/security/request';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
+
   try {
-    const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const pageSize = parseInt(searchParams.get('pageSize') || '50');
-    const action = searchParams.get('action') || '';
-    const entity = searchParams.get('entity') || '';
+    const { page, pageSize, skip, take } = parsePagination(searchParams, 50);
+    const action = cleanString(searchParams.get('action'), 64);
+    const entity = cleanString(searchParams.get('entity'), 64);
 
-    const where: Record<string, unknown> = {};
+    /**
+     * Tenant scoping: audit rows carry the acting user's email and the org name
+     * in the joined payload, so an unscoped list leaked another tenant's staff
+     * directory through the audit trail. Pinned to the caller's own org; a
+     * platform SUPER_ADMIN keeps the global view.
+     */
+    const where = scopeWhere(guard.guard, {} as Record<string, unknown>);
     if (action) where.action = action;
     if (entity) where.entity = entity;
 
@@ -29,8 +33,8 @@ export async function GET(request: NextRequest) {
           organization: { select: { name: true } },
         },
         orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        skip,
+        take,
       }),
       prisma.auditLog.count({ where }),
     ]);

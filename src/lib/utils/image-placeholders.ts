@@ -4,6 +4,8 @@
  * All SVGs are self-contained (no external fonts or resources).
  */
 
+import { sanitizeSvgMarkup } from '@/lib/security/sanitize-html';
+
 /** Company Logo placeholder — a minimal building/abstract logo shape */
 const LOGO_PLACEHOLDER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" width="200" height="80">
   <rect width="200" height="80" fill="#f0f4ff" rx="8"/>
@@ -249,6 +251,15 @@ function decodeUrlEncoded(str: string): string {
  * Helper to clean and extract valid SVG string from decoded markup.
  * Handles XML declarations (<?xml ...?>), DOCTYPE statements, comments,
  * and leading/trailing whitespace.
+ *
+ * SECURITY: the returned markup is injected into the DOM as *live* inline SVG
+ * (see replaceSvgDataUris). An SVG in `<img src>` is inert, but once inlined
+ * `<script>`, `onload=`, `<foreignObject><iframe>` and
+ * `<animate attributeName="href" values="javascript:…">` all execute in the
+ * page's origin. The previous version only stripped the XML prolog and
+ * returned everything from `<svg` onward, so a crafted logo upload was stored
+ * XSS on every template page, share page and exported document. The payload is
+ * now run through the allowlist sanitizer before it can reach the DOM.
  */
 export function cleanSvgMarkup(markup: string): string | null {
   if (!markup) return null;
@@ -259,10 +270,13 @@ export function cleanSvgMarkup(markup: string): string | null {
   cleaned = cleaned.replace(/^<!DOCTYPE[^>]*>/i, '').trim();
 
   const svgIndex = cleaned.indexOf('<svg');
-  if (svgIndex !== -1) {
-    return cleaned.slice(svgIndex);
-  }
-  return null;
+  if (svgIndex === -1) return null;
+
+  const body = cleaned.slice(svgIndex);
+  if (!/<\/svg\s*>/i.test(body)) return null;
+
+  const sanitized = sanitizeSvgMarkup(body);
+  return sanitized && sanitized.toLowerCase().includes('<svg') ? sanitized : null;
 }
 
 /**

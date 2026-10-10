@@ -1,15 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { requireAdmin, scopeWhere } from '@/lib/security/authorization';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
+
   try {
-    const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+    /**
+     * Tenant scoping.
+     *
+     * Every aggregate below is money data, and this route previously ran them
+     * platform-wide for any `ADMIN`. A single tenant admin could read total
+     * revenue, MRR, ARR, ARPU, churn and LTV for the entire platform —
+     * including the exact earnings of every competing tenant.
+     *
+     * `scopeWhere` now pins each query to the caller's own organization; a
+     * platform `SUPER_ADMIN` keeps the consolidated view. Anonymous instant-
+     * download payments have a null `organizationId` and therefore correctly
+     * do not appear in a single tenant's numbers.
+     */
+    const paymentScope = () =>
+      scopeWhere(guard.guard, { status: 'SUCCESS' } as Record<string, unknown>);
+    const subscriptionScope = () => scopeWhere(guard.guard, {} as Record<string, unknown>);
+    const userScope = () => scopeWhere(guard.guard, { deletedAt: null } as Record<string, unknown>);
 
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || 'month'; // day, week, month, year, all
@@ -20,9 +36,20 @@ export async function GET(request: NextRequest) {
     let fromDate: Date;
     let toDate: Date = now;
 
+    // `?from`/`?to` are unvalidated: an unparseable or inverted range silently
+    // produced `Invalid Date` / an empty result set, and `from` in the far
+    // future forced a full unbounded table scan.
     if (fromParam && toParam) {
-      fromDate = new Date(fromParam);
-      toDate = new Date(toParam);
+      const parsedFrom = new Date(fromParam);
+      const parsedTo = new Date(toParam);
+      if (Number.isNaN(parsedFrom.getTime()) || Number.isNaN(parsedTo.getTime())) {
+        return NextResponse.json({ success: false, error: 'Invalid from/to date' }, { status: 400 });
+      }
+      if (parsedFrom > parsedTo) {
+        return NextResponse.json({ success: false, error: 'from must be before to' }, { status: 400 });
+      }
+      fromDate = parsedFrom;
+      toDate = parsedTo;
     } else {
       switch (period) {
         case 'day':
@@ -62,21 +89,21 @@ export async function GET(request: NextRequest) {
     ] = await Promise.all([
       // Total all-time revenue
       prisma.payment.aggregate({
-        where: { status: 'SUCCESS' },
+        where: paymentScope(),
         _sum: { amount: true },
         _count: true,
       }),
 
       // Revenue for selected period
       prisma.payment.aggregate({
-        where: { status: 'SUCCESS', createdAt: { gte: fromDate, lte: toDate } },
+        where: { ...paymentScope(), createdAt: { gte: fromDate, lte: toDate } },
         _sum: { amount: true },
         _count: true,
       }),
 
       // Daily revenue for last 30 days
       prisma.payment.findMany({
-        where: { status: 'SUCCESS', createdAt: { gte: from30DaysAgo } },
+        where: { ...paymentScope(), createdAt: { gte: from30DaysAgo } },
         select: { amount: true, paymentType: true, createdAt: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -84,7 +111,7 @@ export async function GET(request: NextRequest) {
       // Revenue by payment type (period)
       prisma.payment.groupBy({
         by: ['paymentType'],
-        where: { status: 'SUCCESS', createdAt: { gte: fromDate, lte: toDate } },
+        where: { ...paymentScope(), createdAt: { gte: fromDate, lte: toDate } },
         _sum: { amount: true },
         _count: true,
       }),
@@ -93,7 +120,7 @@ export async function GET(request: NextRequest) {
       prisma.payment.groupBy({
         by: ['paymentType'],
         where: {
-          status: 'SUCCESS',
+          ...paymentScope(),
           paymentType: 'SUBSCRIPTION',
           createdAt: { gte: fromDate, lte: toDate },
         },
@@ -104,50 +131,65 @@ export async function GET(request: NextRequest) {
       // Payment status counts
       prisma.payment.groupBy({
         by: ['status'],
+        where: scopeWhere(guard.guard, {} as Record<string, unknown>),
         _count: true,
       }),
 
       // Refund stats
       prisma.payment.aggregate({
-        where: { status: 'REFUNDED' },
+        where: scopeWhere(guard.guard, { status: 'REFUNDED' } as Record<string, unknown>),
         _sum: { amount: true, refundAmount: true },
         _count: true,
       }),
 
       // Subscription stats
       Promise.all([
-        prisma.subscription.count({ where: { status: 'ACTIVE' } }),
-        prisma.subscription.count({ where: { status: 'GRACE_PERIOD' } }),
-        prisma.subscription.count({ where: { status: 'EXPIRED' } }),
-        prisma.subscription.count({ where: { status: 'CANCELLED' } }),
-        prisma.subscription.aggregate({ where: { status: 'ACTIVE' }, _sum: { amount: true } }),
+        prisma.subscription.count({ where: { ...subscriptionScope(), status: 'ACTIVE' } }),
+        prisma.subscription.count({ where: { ...subscriptionScope(), status: 'GRACE_PERIOD' } }),
+        prisma.subscription.count({ where: { ...subscriptionScope(), status: 'EXPIRED' } }),
+        prisma.subscription.count({ where: { ...subscriptionScope(), status: 'CANCELLED' } }),
+        prisma.subscription.aggregate({
+          where: { ...subscriptionScope(), status: 'ACTIVE' },
+          _sum: { amount: true },
+        }),
         prisma.subscription.groupBy({
           by: ['plan'],
           _count: true,
-          where: { status: 'ACTIVE' },
+          where: { ...subscriptionScope(), status: 'ACTIVE' },
         }),
         prisma.subscription.count({
-          where: { createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) } },
+          where: {
+            ...subscriptionScope(),
+            createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
+          },
         }),
       ]),
 
       // Instant download stats
       Promise.all([
         prisma.payment.count({
-          where: { paymentType: 'INSTANT_DOWNLOAD', createdAt: { gte: fromDate, lte: toDate } },
+          where: {
+            ...scopeWhere(guard.guard, {} as Record<string, unknown>),
+            paymentType: 'INSTANT_DOWNLOAD',
+            createdAt: { gte: fromDate, lte: toDate },
+          },
         }),
         prisma.payment.aggregate({
-          where: { paymentType: 'INSTANT_DOWNLOAD', status: 'SUCCESS', createdAt: { gte: fromDate, lte: toDate } },
+          where: {
+            ...paymentScope(),
+            paymentType: 'INSTANT_DOWNLOAD',
+            createdAt: { gte: fromDate, lte: toDate },
+          },
           _sum: { amount: true },
         }),
       ]),
 
       // User counts
       Promise.all([
-        prisma.user.count({ where: { deletedAt: null } }),
-        prisma.user.count({ where: { deletedAt: null, createdAt: { gte: fromDate } } }),
+        prisma.user.count({ where: userScope() }),
+        prisma.user.count({ where: { ...userScope(), createdAt: { gte: fromDate } } }),
         prisma.user.count({
-          where: { deletedAt: null, role: { not: 'SUPER_ADMIN' } },
+          where: { ...userScope(), role: { not: 'SUPER_ADMIN' } },
         }),
       ]),
 
@@ -156,7 +198,7 @@ export async function GET(request: NextRequest) {
       // count as a paying user.
       prisma.payment.groupBy({
         by: ['userId'],
-        where: { status: 'SUCCESS', userId: { not: null } },
+        where: { ...paymentScope(), userId: { not: null } },
         _count: true,
       }),
     ]);
@@ -192,7 +234,7 @@ export async function GET(request: NextRequest) {
     // ─── Monthly revenue (last 12 months) ───
     const twelveMonthsAgo = new Date(now.getFullYear() - 1, now.getMonth(), 1);
     const monthlyPayments = await prisma.payment.findMany({
-      where: { status: 'SUCCESS', createdAt: { gte: twelveMonthsAgo } },
+      where: { ...paymentScope(), createdAt: { gte: twelveMonthsAgo } },
       select: { amount: true, paymentType: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock the document pipeline so no real HTML/DOCX generation or DB lookups
@@ -17,7 +17,7 @@ const { engineMocks, templateMocks, docxMocks, prismaMocks } = vi.hoisted(() => 
   },
   prismaMocks: {
     updateMany: vi.fn(),
-    findUnique: vi.fn(),
+    findFirst: vi.fn(),
     create: vi.fn(),
   },
 }));
@@ -81,10 +81,16 @@ describe('POST /api/instant/download', () => {
     // resetAllMocks clears call history AND implementations on both vi.fn()
     // hoisted mocks and spies, so no state can leak between tests.
     vi.resetAllMocks();
+    // Enable trusted proxy so x-forwarded-for headers are honored for rate limiting
+    process.env.TRUST_PROXY = 'true';
     verifySpy = vi.spyOn(PaymentService, 'verifyInstantDownloadPayment');
     // Default: a fresh payment that hasn't been consumed and whose webhook
     // already recorded it (normal successful flow).
     prismaMocks.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  afterEach(() => {
+    delete process.env.TRUST_PROXY;
   });
 
   it('rejects requests missing payment fields with 400 before any work happens', async () => {
@@ -144,7 +150,7 @@ describe('POST /api/instant/download', () => {
   it('rejects a replayed payment (already consumed) with 409 and no document', async () => {
     verifySpy.mockResolvedValue(true);
     prismaMocks.updateMany.mockResolvedValue({ count: 0 });
-    prismaMocks.findUnique.mockResolvedValue({ usedAt: new Date() });
+    prismaMocks.findFirst.mockResolvedValue({ usedAt: new Date() });
     templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
 
     const res = await post(VALID_PAYLOAD);
@@ -156,7 +162,7 @@ describe('POST /api/instant/download', () => {
   it('records + consumes the payment when the webhook has not landed yet', async () => {
     verifySpy.mockResolvedValue(true);
     prismaMocks.updateMany.mockResolvedValue({ count: 0 });
-    prismaMocks.findUnique.mockResolvedValue(null);
+    prismaMocks.findFirst.mockResolvedValue(null);
     prismaMocks.create.mockResolvedValue({});
     templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
 
@@ -179,7 +185,7 @@ describe('POST /api/instant/download', () => {
   it('rejects when two requests race to consume the same payment', async () => {
     verifySpy.mockResolvedValue(true);
     prismaMocks.updateMany.mockResolvedValue({ count: 0 });
-    prismaMocks.findUnique.mockResolvedValue(null);
+    prismaMocks.findFirst.mockResolvedValue(null);
     prismaMocks.create.mockRejectedValue(new Error('Unique constraint failed'));
 
     const res = await post(VALID_PAYLOAD);

@@ -4,6 +4,7 @@ import {
   PREMIUM_PRICE,
   ANNUAL_PREMIUM_PRICE,
 } from '@/lib/utils/constants';
+import { timingSafeEqualStr } from '@/lib/security/crypto';
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID!;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET!;
@@ -126,7 +127,11 @@ export class PaymentService {
 
   /**
    * Verify Razorpay payment signature
-   * Uses ESM import pattern for compatibility with Next.js App Router
+   *
+   * The comparison is constant-time. `expectedSignature === signature`
+   * short-circuits on the first differing byte, so an attacker able to measure
+   * response latency can recover the expected MAC incrementally and forge a
+   * valid signature for any order/payment pair.
    */
   static async verifyPaymentAsync(
     orderId: string,
@@ -138,7 +143,7 @@ export class PaymentService {
       .update(`${orderId}|${paymentId}`)
       .digest('hex');
 
-    return expectedSignature === signature;
+    return timingSafeEqualStr(expectedSignature, String(signature ?? ''));
   }
 
   /**

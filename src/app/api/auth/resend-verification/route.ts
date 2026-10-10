@@ -3,7 +3,8 @@ import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { EmailService } from '@/lib/email/email-service';
 import { EMAIL_VERIFICATION_TOKEN_TTL_MS } from '@/lib/utils/constants';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { hashToken } from '@/lib/security/crypto';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,13 +39,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Per-address only is keyed entirely on attacker-supplied input, so it was
+    // unbounded across distinct targets and each call sent a real email.
+    if (!checkRateLimit(`resend:ip:${getClientIp(request)}`, 5, 3_600_000)) {
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'If your email is registered and unverified, a verification link has been sent.',
+        },
+        { status: 429 }
+      );
+    }
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (user && user.isActive && !user.emailVerified) {
       const verificationToken = `v_${crypto.randomBytes(32).toString('hex')}`;
+      const tokenHash = await hashToken(verificationToken);
       await prisma.verificationToken.create({
         data: {
           identifier: email,
-          token: verificationToken,
+          token: tokenHash,
           expires: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
         },
       });

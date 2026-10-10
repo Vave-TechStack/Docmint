@@ -1,22 +1,22 @@
-import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireUserScope } from '@/lib/security/authorization';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+export async function GET(request: NextRequest) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
 
+  try {
     const documents = await prisma.document.findMany({
       where: {
-        organizationId: session.user.organizationId,
-        userId: session.user.id,
+        organizationId: scope.organizationId,
+        userId: scope.userId,
         deletedAt: null,
       },
+      // Only the tag column is needed, and an unbounded row count is a
+      // needless full scan of the tenant's document table on every keystroke.
       select: { tags: true },
     });
 

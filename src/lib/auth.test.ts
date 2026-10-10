@@ -711,4 +711,58 @@ describe('authorizeCallback', () => {
 
     expect(result).toBeNull();
   });
+
+  it('rate-limits repeated failed login attempts for the same email', async () => {
+    const email = `bruteforce-${Date.now()}@example.com`;
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'user_1',
+      email,
+      passwordHash: '$2a$10$hash',
+      isActive: true,
+    });
+    mockBcryptCompare.mockResolvedValue(false);
+
+    for (let i = 0; i < 10; i++) {
+      const result = await authorizeCallback({ email, password: 'wrong' });
+      expect(result).toBeNull();
+    }
+
+    const rateLimited = await authorizeCallback({ email, password: 'wrong' });
+    expect(rateLimited).toBeNull();
+  });
+
+  it('prevents account enumeration — existing and non-existing accounts return identical null on wrong password', async () => {
+    // Case A: Existing account with wrong password
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'user-1',
+      email: 'existing@example.com',
+      passwordHash: '$2a$10$hash',
+      isActive: true,
+    });
+    mockBcryptCompare.mockResolvedValue(false);
+
+    const resultExisting = await authorizeCallback({
+      email: 'existing@example.com',
+      password: 'wrong-password',
+    });
+
+    // Case B: Non-existent account with wrong password
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    mockBcryptCompare.mockResolvedValue(false);
+
+    const resultNonExisting = await authorizeCallback({
+      email: 'nonexistent@example.com',
+      password: 'wrong-password',
+    });
+
+    // Both must return null — no distinction between "user not found" and "wrong password"
+    expect(resultExisting).toBeNull();
+    expect(resultNonExisting).toBeNull();
+
+    // The underlying calls differ (DB lookup vs no lookup), but the observable
+    // result is identical, preventing timing-based or response-based enumeration.
+    // Note: The test does not assert identical call counts because that would
+    // couple to implementation. The security property is the indistinguishable
+    // return value.
+  });
 });

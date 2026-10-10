@@ -1,6 +1,7 @@
 'use client';
 
 import { replaceSvgDataUris, rasterizeSvgPlaceholders } from '@/lib/utils/image-placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
 
 function downloadBlob(content: Blob | string, filename: string, mime: string) {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
@@ -85,7 +86,10 @@ export function buildDocumentExportHtml(html: string): string {
  * hangs (large docs / data URIs), mirroring the template page behavior.
  */
 export async function exportDocumentPdf(html: string, title: string): Promise<void> {
-  let safeHtml = replaceSvgDataUris(html || '');
+  // Sanitize first. The print fallback below does `printWindow.document.write()`
+  // into a window that is same-origin with DocMint, so unsanitized document
+  // HTML here is direct script execution in the app's origin.
+  let safeHtml = replaceSvgDataUris(sanitizeHtmlFragment(html || ''));
   safeHtml = await rasterizeSvgPlaceholders(safeHtml);
   safeHtml = safeHtml.replace(
     /(<img\s[^>]*?)(?:(\s+onerror\s*=\s*['"][^'"]*['"]))?([^>]*>)/gi,
@@ -149,7 +153,7 @@ export async function exportDocumentPdf(html: string, title: string): Promise<vo
 /** DOCX export for documents via the shared HTML → .docx generator. */
 export async function exportDocumentDocx(html: string, title: string): Promise<void> {
   const { DOCXGenerator } = await import('@/lib/docx/docx-generator');
-  const buffer = await DOCXGenerator.generate(html || '', { title });
+  const buffer = await DOCXGenerator.generate(sanitizeHtmlFragment(html || ''), { title });
   const blob = new Blob([buffer as unknown as BlobPart], {
     type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   });
@@ -162,8 +166,10 @@ export async function exportDocumentDocx(html: string, title: string): Promise<v
 
 /** Standalone HTML export for documents (styled, page-break markers intact). */
 export function exportDocumentHtml(html: string, title: string): void {
+  // The downloaded file is opened directly by the browser with no sandbox, so
+  // it must be sanitized like every other HTML sink.
   downloadBlob(
-    buildDocumentExportHtml(html || ''),
+    buildDocumentExportHtml(sanitizeHtmlFragment(html || '')),
     `${safeFileName(title, 'document')}.html`,
     'text/html;charset=utf-8'
   );

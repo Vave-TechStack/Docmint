@@ -86,6 +86,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /**
+     * Premium gate — matches /api/instant/download.
+     *
+     * This route previously had no `isPremium` check at all, so the ₹9 instant
+     * flow could pull a premium template's full `htmlTemplate` and return it
+     * watermarked. The watermark is a plain <div>: removing it yields the
+     * complete paid document, so the paywall was effectively open. Premium
+     * templates are sold through the Template Library only.
+     */
+    if (template.isPremium) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Premium templates require a DocMint Premium subscription. Get this template from the Template Library.',
+        },
+        { status: 403 }
+      );
+    }
+
     // Prepare sample variables — fill empty ones with sample data
     const filledVariables = { ...variables };
     if (template.variables && Array.isArray(template.variables)) {

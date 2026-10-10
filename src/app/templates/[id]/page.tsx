@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
 import { getDefaultImageForPlaceholder, replaceSvgDataUris, rasterizeSvgPlaceholders, isValidImageSource } from '@/lib/utils/image-placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
 import { FileDown, FileSpreadsheet, PenTool } from 'lucide-react';
 
 interface TemplateDetail {
@@ -92,7 +93,10 @@ export default function TemplateDetailPage() {
 
   // ─── Client-side PDF generation using jsPDF ───
   const generatePDFClientSide = async (rawHtml: string, fileName: string): Promise<void> => {
-    let html = replaceSvgDataUris(rawHtml || '');
+    // Sanitize on the export path: template HTML is user-authored and document
+    // values are interpolated raw, and this output is a download rather than a
+    // sandboxed frame.
+    let html = replaceSvgDataUris(sanitizeHtmlFragment(rawHtml || ''));
     // jsPDF's doc.html() renders via html2canvas, which cannot load SVG images
     // in ANY form (inline <svg> logs "Error loading svg data:..."; base64 SVG
     // data-URI <img> tags log "Error loading image data:image/svg+xml;base64,...")
@@ -332,6 +336,21 @@ export default function TemplateDetailPage() {
       html = html.replace(/\{\{([\w.-]+)(?:\:[^}]+)?\}\}/g, (_match: string, key: string) => {
         return isImageFieldKey(key) ? getDefaultImageForPlaceholder(key) : '';
       });
+
+      /**
+       * Step 3.5: Sanitize the resolved template.
+       *
+       * Both the template HTML (user-authored, and templates are shareable
+       * across tenants via the instant/[slug] flow) and the interpolated
+       * `formValues` are attacker-controlled. The preview iframe is currently
+       * inert only because it uses `sandbox="allow-same-origin"` *without*
+       * `allow-scripts`; sanitizing means a later sandbox change cannot turn
+       * this into script execution in the DocMint origin.
+       *
+       * Must run before replaceSvgDataUris, which promotes an inert
+       * <img src="data:image/svg+xml"> to live inline <svg>.
+       */
+      html = sanitizeHtmlFragment(html);
 
       /**
        * Step 4: Convert SVG data URI <img> tags to inline <svg> elements.

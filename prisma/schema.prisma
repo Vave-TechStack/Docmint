@@ -74,6 +74,7 @@ model User {
   panNumber         String?
   companyAddress    String?
   passwordHash      String?
+  passwordVersion   Int       @default(0)
   image             String?
   role              UserRole  @default(USER)
   twoFactorEnabled  Boolean   @default(false)

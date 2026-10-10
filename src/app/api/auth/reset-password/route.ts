@@ -1,18 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { invalidateUserCache } from '@/lib/security/authorization';
+import { verifyTokenHash } from '@/lib/security/crypto';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * POST /api/auth/reset-password  { token, password }
- *
- * Validates the single-use password-reset token, then sets the account's new
- * password. Tokens are purpose-tagged with an "r_" prefix so verification
- * tokens can never reset a password and vice versa.
+ * Upper bound on candidate hashes examined per request. See the equivalent
+ * note in `verify-email`: tokens are bcrypt-hashed, so an unauthenticated
+ * request would otherwise sweep every unexpired token in the table at ~250ms
+ * of CPU each — an unmetered DoS that worsens as the table grows.
  */
+const MAX_TOKEN_CANDIDATES = 50;
+
 export async function POST(request: NextRequest) {
   try {
+    // Before any DB or bcrypt work, keyed by IP.
+    if (!checkRateLimit(`reset-password:${getClientIp(request)}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many attempts. Please wait a minute.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const token = typeof body?.token === 'string' ? body.token : '';
     const password = typeof body?.password === 'string' ? body.password : '';
@@ -31,26 +43,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const record = await prisma.verificationToken.findUnique({ where: { token } });
-    if (!record) {
+    // Since tokens are now stored hashed, we must find candidate tokens by
+    // identifier (email) and verify the provided token against each hash.
+    // First, find all unexpired reset tokens (r_* prefix tokens).
+    const candidateTokens = await prisma.verificationToken.findMany({
+      where: {
+        expires: { gt: new Date() },
+      },
+      take: MAX_TOKEN_CANDIDATES,
+      orderBy: { expires: 'desc' },
+    });
+
+    let matchedRecord: { identifier: string; token: string; expires: Date } | null = null;
+
+    for (const candidate of candidateTokens) {
+      const isMatch = await verifyTokenHash(token, candidate.token);
+      if (isMatch) {
+        matchedRecord = candidate;
+        break;
+      }
+    }
+
+    if (!matchedRecord) {
       return NextResponse.json(
         { success: false, error: 'Invalid or already-used reset link' },
         { status: 400 }
       );
     }
 
-    if (record.expires < new Date()) {
-      return NextResponse.json(
-        { success: false, error: 'This reset link has expired. Please request a new one.' },
-        { status: 410 }
-      );
-    }
-
     // The token's identifier is the account email.
     const hashedPassword = await bcrypt.hash(password, 12);
     const updated = await prisma.user.updateMany({
-      where: { email: record.identifier, deletedAt: null },
-      data: { passwordHash: hashedPassword },
+      where: { email: matchedRecord.identifier, deletedAt: null },
+      data: { passwordHash: hashedPassword, passwordVersion: { increment: 1 } },
     });
 
     if (updated.count === 0) {
@@ -61,7 +86,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Single-use token.
-    await prisma.verificationToken.delete({ where: { token } }).catch(() => {});
+    await prisma.verificationToken.delete({ where: { token: matchedRecord.token } }).catch(() => {});
+
+    // Invalidate revalidation cache so the new password takes effect immediately
+    // on subsequent requests rather than waiting for the TTL to expire.
+    const updatedUser = await prisma.user.findFirst({ where: { email: matchedRecord.identifier, deletedAt: null }, select: { id: true } });
+    if (updatedUser) {
+      invalidateUserCache(updatedUser.id);
+    }
 
     return NextResponse.json({
       success: true,

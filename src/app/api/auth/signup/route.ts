@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { EmailService } from '@/lib/email/email-service';
 import { EMAIL_VERIFICATION_TOKEN_TTL_MS } from '@/lib/utils/constants';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { hashToken } from '@/lib/security/crypto';
 
 export async function POST(request: Request) {
   try {
@@ -98,10 +99,11 @@ export async function POST(request: Request) {
     try {
       // "v_" prefix marks this as a verification token (see verify-email route).
       const verificationToken = `v_${crypto.randomBytes(32).toString('hex')}`;
+      const tokenHash = await hashToken(verificationToken);
       await prisma.verificationToken.create({
         data: {
           identifier: normalizedEmail,
-          token: verificationToken,
+          token: tokenHash,
           expires: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
         },
       });
