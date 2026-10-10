@@ -40,7 +40,6 @@ vi.mock('@/lib/prisma', () => ({ prisma: prismaMocks }));
 vi.mock('@/lib/auth', () => ({ auth: authMock }));
 
 import { POST, PATCH } from './route';
-import { mockRevalidation } from '@/test/guard-harness';
 import { __clearRevalidationCache } from '@/lib/security/authorization';
 import { resetRateLimitsForTests } from '@/lib/rate-limit';
 

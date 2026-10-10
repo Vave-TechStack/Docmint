@@ -207,9 +207,9 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ))}
-              <Button onClick={handleUpdatePassword}>
+              <Button onClick={handleUpdatePassword} disabled={changingPassword}>
                 <Shield className="w-4 h-4 mr-2" />
-                Update Password
+                {changingPassword ? 'Updating…' : 'Update Password'}
               </Button>
             </div>
             <div className="pt-4 border-t border-gray-100">

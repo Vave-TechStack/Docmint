@@ -201,10 +201,14 @@ Microsoft Entra ID             ─┘
 - **Email verification** is required before sign-in completes.
 - **`passwordVersion`** increments on reset; guards reject any session issued
   at a lower version.
-- **Verification/reset tokens** are single-use, bcrypt-hashed, and matched by a
-  bounded sweep — see
-  [`TOKEN_LOOKUP_PROPOSAL.md`](./TOKEN_LOOKUP_PROPOSAL.md) for the current
-  limitation and the proposed indexed fix.
+- **Verification/reset tokens** are single-use and bcrypt-hashed at rest. A
+  keyed HMAC digest (`tokenIndex`) is stored alongside the hash so the owning
+  row can be found with an index instead of a sweep. **The migration adding
+  that column has not been applied to any environment**, so today the lookup
+  still falls back to a bounded sweep for rows without an index. See
+  [`TOKEN_LOOKUP_PROPOSAL.md`](./TOKEN_LOOKUP_PROPOSAL.md).
+- **Email verification is enforced** at sign-in, not merely requested. An
+  account that never clicked its verification link cannot obtain a session.
 
 ### The edge auth gate
 
@@ -317,6 +321,28 @@ A @dnd-kit canvas with a palette, properties panel, undo/redo, grouping,
 z-ordering and HTML export. This is the largest untested surface in the
 codebase — `canvas.tsx` is 865 lines with no unit tests.
 
+### Export paths
+
+PDF and DOCX use **different renderers**, which is the most important thing to
+know about document output here:
+
+- **PDF** — jsPDF `.html()` rasterises through the browser's own HTML engine
+  via html2canvas, so tables, page breaks and CSS behave as they do on screen.
+- **DOCX** — `src/lib/docx/docx-generator.ts` parses the HTML itself and emits
+  native Word constructs: tables (colspan/rowspan, nested tables, borders,
+  header shading), lists, headings, inline formatting, line breaks and
+  embedded images.
+
+`DOCXGenerator` previously had no `<table>` branch and skipped `<style>` tags
+without skipping their contents, so every exported document lost all tables
+and opened with raw CSS as body text. It now parses to a tree and renders
+through an intermediate model; `docx-generator.regression.test.ts` asserts
+this against all 30 seeded templates.
+
+**Visual PDF output is not covered by unit tests** — jsPDF needs a browser DOM.
+Structural coverage lives in `document-export.pdf-regression.test.ts`; visual
+verification requires the Playwright staging suite, which has not run.
+
 ---
 
 ## 9. Testing
@@ -367,15 +393,21 @@ translation, grammar checking.
 1. **Rate limiting is per-process** (`src/lib/rate-limit.ts`). It blunts abuse
    on a single instance and does not hold across replicas. Documented in-file
    as abuse-blunting, not a security boundary.
-2. **Token lookup sweeps up to 50 candidates.** A valid token beyond that
-   window is rejected. Fails safe, but denies legitimate users.
-   See [`TOKEN_LOOKUP_PROPOSAL.md`](./TOKEN_LOOKUP_PROPOSAL.md).
-3. **Client-heavy rendering.** 33 of 35 pages are client components.
-4. **AI generation is unwired.** `src/lib/ai/ai-engine.ts` has no callers.
-5. **No component tests.** The largest and most intricate UI — the payslip
-   designer — is untested.
-6. **E2E unverified.** The suite has not been executed against a staging
-   deployment.
+2. **Token lookup still sweeps when the index column is absent.** The indexed
+   HMAC path and its migration are implemented, but the migration is **not
+   applied**, so production behaviour is still the bounded 50-candidate sweep:
+   a valid token beyond that window is rejected. Fails safe, but denies
+   legitimate users. See [`TOKEN_LOOKUP_PROPOSAL.md`](./TOKEN_LOOKUP_PROPOSAL.md).
+3. **Financial validation covers arithmetic only.** No statutory rate (PF, ESI,
+   professional tax, income tax, GST) is derived, because those need a business
+   decision the product has not made. See
+   [`FINANCIAL_VALIDATION.md`](./FINANCIAL_VALIDATION.md).
+4. **Client-heavy rendering.** 33 of 35 pages are client components.
+5. **AI generation is unwired.** `src/lib/ai/ai-engine.ts` has no callers.
+6. **No component tests.** The largest and most intricate UI - the payslip
+   designer - is untested.
+7. **E2E unverified.** The suite has not been executed against a valid,
+   isolated HTTPS staging environment.
 
 ---
 

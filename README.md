@@ -19,7 +19,7 @@ DocMint is a multi-tenant, AI-powered document generation platform. Pick a templ
 - **🛡️ Enterprise Security** — Security headers (CSP, HSTS, X-Frame-Options, Permissions-Policy) set in the edge proxy, bcrypt password hashing, JWT sessions, Razorpay webhook signature verification with IP allowlisting.
 - **🖥️ Admin Panel** — Dashboard, users, subscriptions, revenue, support tickets, coupons, blog, audit logs, and template management.
 - **📧 Transactional Email** — Verification and welcome emails via Resend.
-- **✅ Tested** — 1129 unit tests across auth, engines, generators, and utilities (Vitest), plus a Playwright suite for staging browser validation.
+- **✅ Tested** — 1251 unit tests across auth, engines, generators, documents, and utilities (Vitest), plus a Playwright suite for staging browser validation.
 
 ---
 
@@ -136,7 +136,7 @@ Copy `.env.example` to `.env` (or set them in your deployment). All `.env*` file
 | `npm run build` | Production build |
 | `npm start` | Run the production build |
 | `npm run lint` | ESLint across the project |
-| `npm test` | Run the Vitest suite (1129 tests) |
+| `npm test` | Run the Vitest suite (1251 tests) |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run test:coverage` | Vitest with coverage report |
 | `npm run db:seed` | Seed sample templates (`prisma/seed.ts`) |
@@ -194,6 +194,7 @@ docs/                       # Architecture & OAuth setup guides
 | `/api/webhooks/razorpay` | Razorpay payment webhook (signature-verified) |
 | `/api/subscriptions` | Subscription plans & status |
 | `/api/company/profile` | Company branding profile |
+| `/api/account` | Profile update (`PATCH`) and authenticated password change (`POST`) |
 | `/api/contact` | Public contact form |
 | `/api/csp-report` | First-party CSP violation collector |
 | `/api/admin/*` | Admin dashboard, users, revenue, tickets, coupons, blog, audit logs, templates |
@@ -203,6 +204,8 @@ docs/                       # Architecture & OAuth setup guides
 ## 📚 Documentation
 
 - [Architecture & Design](./docs/ARCHITECTURE.md) — what is actually implemented today, and what is planned
+- [Financial Validation](./docs/FINANCIAL_VALIDATION.md) — what is checked, and which rules need a business decision
+- [Rate Limiting Design](./docs/RATE_LIMITING_DESIGN.md) — multi-replica design; nothing provisioned
 - [Token Lookup Proposal](./docs/TOKEN_LOOKUP_PROPOSAL.md) — indexed lookup design for verification/reset tokens
 - [Production Audit Baseline](./docs/PRODUCTION_AUDIT_BASELINE.md) — historical security audit and current status
 - [Google OAuth Setup](./docs/google-oauth-setup.md) — step-by-step Google login configuration
@@ -267,11 +270,13 @@ A production setup lives in [`deploy/`](./deploy) (docker-compose + nginx with w
 
 ## ⚠️ Known limitations
 
-- **Rate limiting is per-process** (`src/lib/rate-limit.ts`). Limits do not hold across multiple replicas.
-- **Verification/reset token lookup** uses a bounded sweep of up to 50 unexpired tokens, so a valid token beyond that window is rejected. See [`docs/TOKEN_LOOKUP_PROPOSAL.md`](./docs/TOKEN_LOOKUP_PROPOSAL.md).
+- **Rate limiting is per-process** (`src/lib/rate-limit.ts`). Limits do not hold across multiple replicas, and reset on every deploy. This blocks a multi-replica deployment. See [`docs/RATE_LIMITING_DESIGN.md`](./docs/RATE_LIMITING_DESIGN.md).
+- **Financial validation covers arithmetic only.** Documents are checked for internal consistency (earnings vs gross, net vs gross minus deductions, tax vs components, amount-in-words vs the figure). No statutory rate — PF, ESI, professional tax, income tax, GST — is derived, because those depend on employer type, state and filing category the product has not specified. See [`docs/FINANCIAL_VALIDATION.md`](./docs/FINANCIAL_VALIDATION.md).
+- **A pending migration is required for indexed token lookup.** `prisma/migrations/20261010000000_add_token_index` is written but **not applied to any environment**. Until it is applied, verification and reset tokens fall back to a bounded sweep of up to 50 unexpired tokens, so a valid token beyond that window is rejected. See [`docs/TOKEN_LOOKUP_PROPOSAL.md`](./docs/TOKEN_LOOKUP_PROPOSAL.md).
 - **Most pages are client components.** Only `/terms` and `/privacy` are React Server Components; every other page fetches its data from the browser.
+- **The payslip designer has no unit tests** and is the largest untested surface in the codebase.
 - **AI generation is not wired up.** The engine exists but nothing calls it.
-- The E2E suite has not been executed against a staging deployment as of this commit.
+- **The E2E suite has not been executed** against a valid, isolated HTTPS staging environment. 65 tests covering tenant isolation, CSP, security headers and payment flows remain unverified.
 
 ---
 
