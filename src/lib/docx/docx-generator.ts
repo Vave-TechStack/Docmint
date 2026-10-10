@@ -11,6 +11,7 @@ import {
   BorderStyle,
   ShadingType,
   ImageRun,
+  PageBreak,
   LevelFormat,
   VerticalAlign,
 } from 'docx';
@@ -105,7 +106,11 @@ interface TableModel {
   rows: RowModel[];
 }
 
-type BlockModel = ParaModel | TableModel;
+interface PageBreakModel {
+  kind: 'pagebreak';
+}
+
+type BlockModel = ParaModel | TableModel | PageBreakModel;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTML parsing
@@ -669,6 +674,14 @@ function renderBlock(nodes: Node[], base: InlineStyle, listDepth = 0, ordered = 
     const { tag } = node;
     if (DROPPED_TAGS.has(tag)) continue;
 
+    // The editor stores auto/manual page breaks as
+    // `<div class="doc-page-break">`; these must become real Word page
+    // breaks or a multi-page document collapses onto one page.
+    if (tag === 'div' && (node.attrs.class || '').split(/\s+/).includes('doc-page-break')) {
+      out.push({ kind: 'pagebreak' });
+      continue;
+    }
+
     if (tag === 'table') {
       const t = buildTable(node, base);
       if (t) {
@@ -844,6 +857,10 @@ function toParagraph(model: ParaModel): Paragraph {
   });
 }
 
+function toPageBreak(): Paragraph {
+  return new Paragraph({ children: [new PageBreak()], spacing: { before: 0, after: 0 } });
+}
+
 function toTable(model: TableModel): Table {
   const rows = model.rows.map(
     (row) =>
@@ -851,7 +868,9 @@ function toTable(model: TableModel): Table {
         children: row.cells.map(
           (cell) =>
             new TableCell({
-              children: cell.blocks.map((b) => (b.kind === 'para' ? toParagraph(b) : toTable(b))) as never,
+              children: cell.blocks.map((b) =>
+                b.kind === 'para' ? toParagraph(b) : b.kind === 'table' ? toTable(b) : toPageBreak()
+              ) as never,
               borders: TABLE_BORDERS,
               shading: cell.fill ? { type: ShadingType.CLEAR, color: 'auto', fill: cell.fill } : undefined,
               columnSpan: cell.colSpan > 1 ? cell.colSpan : undefined,
@@ -958,7 +977,7 @@ export class DOCXGenerator {
               },
             },
             children: (model.length ? model : [{ kind: 'para', runs: [] } as ParaModel]).map((b) =>
-              b.kind === 'para' ? toParagraph(b) : toTable(b)
+              b.kind === 'para' ? toParagraph(b) : b.kind === 'table' ? toTable(b) : toPageBreak()
             ) as never,
           },
         ],
