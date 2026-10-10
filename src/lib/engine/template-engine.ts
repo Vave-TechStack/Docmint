@@ -274,25 +274,37 @@ export class TemplateEngine {
       });
     }
 
+    // A caller with no tenant may only ever see PUBLIC or PREMIUM rows.
+    //
+    // Previously the tenant OR-clause was appended only `if (options.tenantId)`.
+    // An anonymous request for `?type=PRIVATE` therefore produced
+    // `AND: [{isActive}, {visibility:'PRIVATE'}]` with NO ownership filter and
+    // returned every tenant's private templates, including the full
+    // htmlTemplate — a cross-tenant data leak reachable with no credentials.
+    const anonClause = {
+      OR: [{ visibility: 'PUBLIC' as const }, { visibility: 'PREMIUM' as const }],
+    };
+
     const where: Record<string, unknown> = {};
-    if (conditions.length > 1 || options.tenantId) {
-      // Start with the base conditions (isActive, category, search, etc.) joined by AND
-      const allClauses: Record<string, unknown>[] = conditions;
-      
-      // For tenant access: show own templates OR public/premium templates
-      if (options.tenantId) {
-        allClauses.push({
-          OR: [
-            { organizationId: options.tenantId },
-            { visibility: 'PUBLIC' },
-            { visibility: 'PREMIUM' },
-          ],
-        });
-      }
-      
+    const allClauses: Record<string, unknown>[] = [...conditions];
+
+    if (options.tenantId) {
+      // Show own templates OR the publicly listable ones.
+      allClauses.push({
+        OR: [
+          { organizationId: options.tenantId },
+          { visibility: 'PUBLIC' },
+          { visibility: 'PREMIUM' },
+        ],
+      });
+    } else {
+      allClauses.push(anonClause);
+    }
+
+    if (allClauses.length === 1) {
+      Object.assign(where, allClauses[0]);
+    } else {
       where.AND = allClauses;
-    } else if (conditions.length === 1) {
-      Object.assign(where, conditions[0]);
     }
 
 

@@ -254,6 +254,10 @@ export class DocumentEngine {
         folderId: input.folderId,
         content: toJson(input.content || {}),
         variables: toJson(input.variables || {}),
+        // The document body. Omitting this made every document created from a
+        // template open as a blank editor, because this is the column the
+        // editor loads and every export path renders from.
+        htmlContent: input.htmlContent ?? null,
         status: 'DRAFT',
         version: 1,
       },
@@ -267,6 +271,7 @@ export class DocumentEngine {
         version: 1,
         content: toJson(input.content || {}),
         variables: toJson(input.variables || {}),
+        htmlContent: input.htmlContent ?? null,
         changeNote: 'Initial version',
       },
     });
