@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { EmailService } from '@/lib/email/email-service';
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       await EmailService.sendVerificationEmail(email, verificationToken);
     }
 
-    // Generic on purpose â€” do not reveal whether the account exists.
+    // Generic on purpose — do not reveal whether the account exists.
     return NextResponse.json({
       success: true,
       message: 'If your email is registered and unverified, a verification link has been sent.',

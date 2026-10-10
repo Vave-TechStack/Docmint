@@ -1,10 +1,10 @@
-﻿/**
+/**
  * Regression tests for the account endpoints.
  *
  * These did not exist: the settings page showed "Profile updated
  * successfully" and "Password updated (API coming soon)" without calling any
  * API, so every edit a user made on that page was silently discarded. The
- * password control in particular was dangerous â€” a user believed their
+ * password control in particular was dangerous — a user believed their
  * password had changed when it had not.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -64,7 +64,7 @@ function patch(body: unknown): Promise<Response> {
   );
 }
 
-describe('POST /api/account â€” password change', () => {
+describe('POST /api/account — password change', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __clearRevalidationCache();
@@ -151,7 +151,7 @@ describe('POST /api/account â€” password change', () => {
   });
 });
 
-describe('PATCH /api/account â€” profile update', () => {
+describe('PATCH /api/account — profile update', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __clearRevalidationCache();

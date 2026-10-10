@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
 
     // Send a real verification email: a single-use token stored in the
     // VerificationToken table, linked from /verify-email?token=... Failing to
-    // send must not roll back the account â€” the user can request a fresh link
+    // send must not roll back the account — the user can request a fresh link
     // from /verify-email.
     try {
       // "v_" prefix marks this as a verification token (see verify-email route).

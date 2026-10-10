@@ -1,11 +1,11 @@
-﻿/**
+/**
  * Regression tests for two defects that made the product unusable or unsafe.
  *
  * 1. Anonymous callers could read EVERY tenant's PRIVATE templates, including
  *    the full `htmlTemplate`, by requesting `GET /api/templates?type=PRIVATE`.
  *    The tenant OR-clause was only appended when a tenant id was present, so
  *    an anonymous request produced a visibility filter with no ownership
- *    filter at all â€” a cross-tenant data leak reachable with no credentials.
+ *    filter at all — a cross-tenant data leak reachable with no credentials.
  *
  * 2. `DocumentEngine.create` silently dropped `htmlContent`, which is the
  *    column the editor loads and every export path renders from. Every
@@ -39,7 +39,7 @@ import { DocumentEngine } from './document-engine';
 
 const whereOf = () => prismaMocks.template.findMany.mock.calls[0][0].where;
 
-describe('TemplateEngine.list â€” tenant isolation', () => {
+describe('TemplateEngine.list — tenant isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prismaMocks.template.findMany.mockResolvedValue([]);
@@ -110,7 +110,7 @@ describe('TemplateEngine.list â€” tenant isolation', () => {
   });
 });
 
-describe('DocumentEngine.create â€” document body persistence', () => {
+describe('DocumentEngine.create — document body persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prismaMocks.document.create.mockResolvedValue({ id: 'doc-1' });

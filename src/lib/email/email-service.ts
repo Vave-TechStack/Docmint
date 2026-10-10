@@ -1,9 +1,9 @@
-﻿import { escapeHtml, escapeHtmlWithBreaks, stripNewlines, headerSafe } from '@/lib/security/request';
+import { escapeHtml, escapeHtmlWithBreaks, stripNewlines, headerSafe } from '@/lib/security/request';
 /**
  * Constrain a value used as an `href` to an absolute http(s) URL.
  *
  * Interpolating a caller-supplied string into `href="..."` without this check
- * permits `javascript:` and `data:` URIs â€” a live script-execution vector in
+ * permits `javascript:` and `data:` URIs — a live script-execution vector in
  * the recipient's mail client even when the surrounding HTML is escaped.
  * Anything that is not a parseable absolute http/https URL collapses to `#`.
  */
@@ -24,7 +24,7 @@ function safeHttpUrl(value: string): string {
  * Public origin used to build links inside transactional email.
  *
  * Without a fallback, an unset `NEXT_PUBLIC_APP_URL` produced
- * `undefined/verify-email?token=â€¦`, so the one link the entire signup journey
+ * `undefined/verify-email?token=…`, so the one link the entire signup journey
  * depends on was unusable. Every other site URL in the codebase already falls
  * back to localhost; these two did not.
  */
@@ -132,7 +132,7 @@ export class EmailService {
       subject: 'Welcome to DocMint!',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #2563EB;">Welcome, ${name}! ðŸŽ‰</h1>
+          <h1 style="color: #2563EB;">Welcome, ${name}! 🎉</h1>
           <p>Your DocMint account is ready. Start creating professional documents.</p>
           <div style="margin: 30px 0;">
             <a href="${publicAppUrl()}/dashboard" 
@@ -229,11 +229,11 @@ export class EmailService {
       subject: 'Subscription Confirmed - DocMint Premium',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #2563EB;">Subscription Active! ðŸŽ‰</h1>
+          <h1 style="color: #2563EB;">Subscription Active! 🎉</h1>
           <p>Your ${planName} plan is now active.</p>
           <div style="background: #F3F4F6; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <p><strong>Plan:</strong> ${planName}</p>
-            <p><strong>Amount:</strong> â‚¹${amount}</p>
+            <p><strong>Amount:</strong> ₹${amount}</p>
             <p><strong>Valid Until:</strong> ${endDate}</p>
           </div>
           <p>Enjoy unlimited document generation with premium features!</p>
@@ -262,7 +262,7 @@ export class EmailService {
           <p>Thank you for your payment!</p>
           <div style="background: #F3F4F6; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <p><strong>Invoice:</strong> #${invoiceNumber}</p>
-            <p><strong>Amount:</strong> â‚¹${amount}</p>
+            <p><strong>Amount:</strong> ₹${amount}</p>
             <p><strong>Date:</strong> ${date}</p>
           </div>
           ${invoiceUrl ? `<a href="${invoiceUrl}" style="color: #2563EB;">Download Invoice</a>` : ''}
@@ -294,7 +294,7 @@ export class EmailService {
      *   downstream provider folds the value into an SMTP conversation
      *   (header-injection / mail-relay abuse).
      *
-     * Escaping happens here â€” at the sink â€” rather than in the route, so every
+     * Escaping happens here — at the sink — rather than in the route, so every
      * future caller is covered by construction.
      */
     const name = escapeHtml(headerSafe(data.name, 100));
@@ -312,7 +312,7 @@ export class EmailService {
       subject,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #2563EB;">ðŸ“¬ New Contact Form Enquiry</h2>
+          <h2 style="color: #2563EB;">📬 New Contact Form Enquiry</h2>
           <div style="background: #F3F4F6; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <table style="width: 100%; border-collapse: collapse;">
               <tr>
