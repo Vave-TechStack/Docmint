@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock next-auth before importing the route (NextAuth v5 beta.32 has module resolution issues with Next.js 16.3.7)
@@ -27,7 +27,11 @@ const { prismaMocks } = vi.hoisted(() => ({
   prismaMocks: {
     verificationToken: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
+      // Consumed via deleteMany by src/lib/security/token-lookup so a token
+      // consumed by a concurrent request does not throw.
+      deleteMany: vi.fn(),
       delete: vi.fn(),
     },
     user: {
@@ -60,6 +64,7 @@ describe('GET /api/auth/verify-email', () => {
     prismaMocks.verificationToken.findMany.mockResolvedValue([]);
     prismaMocks.user.updateMany.mockResolvedValue({ count: 1 });
     prismaMocks.verificationToken.delete.mockResolvedValue({});
+    prismaMocks.verificationToken.deleteMany.mockResolvedValue({ count: 1 });
   });
 
   it('rejects a missing token with 400', async () => {
@@ -107,7 +112,7 @@ describe('GET /api/auth/verify-email', () => {
       where: { email: 'user@example.com', deletedAt: null },
       data: { emailVerified: expect.any(Date) },
     });
-    expect(prismaMocks.verificationToken.delete).toHaveBeenCalledWith({
+    expect(prismaMocks.verificationToken.deleteMany).toHaveBeenCalledWith({
       where: { token: 'valid-token' },
     });
   });
@@ -122,7 +127,7 @@ describe('GET /api/auth/verify-email', () => {
       success: false,
       error: 'Account not found for this verification link',
     });
-    expect(prismaMocks.verificationToken.delete).not.toHaveBeenCalled();
+    expect(prismaMocks.verificationToken.deleteMany).not.toHaveBeenCalled();
   });
 
   describe('Verification token replay / integrity', () => {
@@ -134,13 +139,13 @@ describe('GET /api/auth/verify-email', () => {
       ]);
       prismaMocks.user.findFirst.mockResolvedValue({ id: 'user-1' });
       prismaMocks.user.updateMany.mockResolvedValueOnce({ count: 1 });
-      prismaMocks.verificationToken.delete.mockResolvedValueOnce({});
+      prismaMocks.verificationToken.deleteMany.mockResolvedValueOnce({ count: 1 });
 
       const firstUse = await get('valid-token');
       expect(firstUse.status).toBe(200);
       const firstBody = await firstUse.json();
       expect(firstBody.success).toBe(true);
-      expect(prismaMocks.verificationToken.delete).toHaveBeenCalledWith({
+      expect(prismaMocks.verificationToken.deleteMany).toHaveBeenCalledWith({
         where: { token: 'valid-token' },
       });
 

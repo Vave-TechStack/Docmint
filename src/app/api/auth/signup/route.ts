@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
@@ -6,6 +6,7 @@ import { EmailService } from '@/lib/email/email-service';
 import { EMAIL_VERIFICATION_TOKEN_TTL_MS } from '@/lib/utils/constants';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { hashToken } from '@/lib/security/crypto';
+import { safeTokenIndex } from '@/lib/security/token-lookup';
 
 export async function POST(request: Request) {
   try {
@@ -94,7 +95,7 @@ export async function POST(request: Request) {
 
     // Send a real verification email: a single-use token stored in the
     // VerificationToken table, linked from /verify-email?token=... Failing to
-    // send must not roll back the account — the user can request a fresh link
+    // send must not roll back the account â€” the user can request a fresh link
     // from /verify-email.
     try {
       // "v_" prefix marks this as a verification token (see verify-email route).
@@ -104,6 +105,8 @@ export async function POST(request: Request) {
         data: {
           identifier: normalizedEmail,
           token: tokenHash,
+          tokenIndex: safeTokenIndex(verificationToken),
+          purpose: 'verify',
           expires: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
         },
       });

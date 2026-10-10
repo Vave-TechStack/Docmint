@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { EmailService } from '@/lib/email/email-service';
 import { EMAIL_VERIFICATION_TOKEN_TTL_MS } from '@/lib/utils/constants';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { hashToken } from '@/lib/security/crypto';
+import { safeTokenIndex } from '@/lib/security/token-lookup';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,13 +60,15 @@ export async function POST(request: NextRequest) {
         data: {
           identifier: email,
           token: tokenHash,
+          tokenIndex: safeTokenIndex(verificationToken),
+          purpose: 'verify',
           expires: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
         },
       });
       await EmailService.sendVerificationEmail(email, verificationToken);
     }
 
-    // Generic on purpose — do not reveal whether the account exists.
+    // Generic on purpose â€” do not reveal whether the account exists.
     return NextResponse.json({
       success: true,
       message: 'If your email is registered and unverified, a verification link has been sent.',

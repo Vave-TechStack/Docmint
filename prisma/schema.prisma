@@ -150,6 +150,14 @@ model Session {
 model VerificationToken {
   identifier String
   token      String   @unique
+  /// HMAC-SHA256 of the raw token, keyed from AUTH_SECRET. Deterministic, so
+  /// it is indexable; keyed, so a table dump cannot confirm a guessed token
+  /// offline. bcrypt in `token` stays the authoritative check. NULL = legacy
+  /// row written before this column existed.
+  tokenIndex String?  @unique
+  /// 'verify' | 'reset'. Replaces inferring purpose from the token's own
+  /// 'v_'/'r_' prefix. NULL = legacy row, accepted by both routes.
+  purpose    String?
   expires    DateTime
 
   @@unique([identifier, token])

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock next-auth before importing the route (NextAuth v5 beta.32 has module resolution issues with Next.js 16.3.7)
@@ -28,7 +28,8 @@ const { prismaMocks } = vi.hoisted(() => ({
     verificationToken: { 
       findMany: vi.fn(), 
       findUnique: vi.fn(), 
-      delete: vi.fn() 
+      delete: vi.fn(),
+      deleteMany: vi.fn() 
     },
     user: { 
       updateMany: vi.fn(),
@@ -66,6 +67,7 @@ describe('POST /api/auth/reset-password', () => {
       expires: new Date(Date.now() + 60_000),
     });
     prismaMocks.verificationToken.delete.mockResolvedValue({});
+    prismaMocks.verificationToken.deleteMany.mockResolvedValue({ count: 1 });
     prismaMocks.user.updateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -95,7 +97,7 @@ describe('POST /api/auth/reset-password', () => {
       data: { passwordHash: 'hashed-password', passwordVersion: { increment: 1 } },
     });
     // Single-use
-    expect(prismaMocks.verificationToken.delete).toHaveBeenCalledWith({
+    expect(prismaMocks.verificationToken.deleteMany).toHaveBeenCalledWith({
       where: { token: VALID_TOKEN },
     });
   });
@@ -123,7 +125,7 @@ describe('POST /api/auth/reset-password', () => {
     prismaMocks.user.updateMany.mockResolvedValue({ count: 0 });
     const res = await post({ token: VALID_TOKEN, password: 'newpassword1' });
     expect(res.status).toBe(404);
-    expect(prismaMocks.verificationToken.delete).not.toHaveBeenCalled();
+    expect(prismaMocks.verificationToken.deleteMany).not.toHaveBeenCalled();
   });
 
   describe('Error information leakage checks', () => {

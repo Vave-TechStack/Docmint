@@ -53,7 +53,10 @@ const { prismaMocks } = vi.hoisted(() => ({
   prismaMocks: {
     verificationToken: {
       findMany: vi.fn(),
+      // Indexed lookup path.
+      findFirst: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
     user: {
       updateMany: vi.fn(),
@@ -126,7 +129,9 @@ describe('verification token lookup', () => {
     vi.resetAllMocks();
     resetRateLimitsForTests();
     prismaMocks.verificationToken.findMany.mockResolvedValue([]);
+    prismaMocks.verificationToken.findFirst.mockResolvedValue(null);
     prismaMocks.verificationToken.delete.mockResolvedValue({});
+    prismaMocks.verificationToken.deleteMany.mockResolvedValue({ count: 1 });
     prismaMocks.user.updateMany.mockResolvedValue({ count: 1 });
     prismaMocks.user.findFirst.mockResolvedValue({ id: 'user-1' });
   });
@@ -257,7 +262,7 @@ describe('verification token lookup', () => {
       const res = await verify(target);
 
       expect(res.status).toBe(200);
-      expect(prismaMocks.verificationToken.delete).toHaveBeenCalledWith({
+      expect(prismaMocks.verificationToken.deleteMany).toHaveBeenCalledWith({
         where: { token: `hash-of-${target}` },
       });
     });

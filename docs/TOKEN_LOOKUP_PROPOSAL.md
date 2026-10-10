@@ -1,9 +1,10 @@
-# Verification/Reset Token Lookup — Design Proposal
+# Verification/Reset Token Lookup — Design and Implementation
 
-**Status:** Proposed. Not implemented.
+**Status:** IMPLEMENTED on `remediation/docx-and-product`. Migration written,
+**not applied to any environment**.
 **Date:** 2026-10-10
 **Scope:** `verify-email` and `reset-password` token resolution.
-**Migration required:** Yes (additive, see Rollout).
+**Migration required:** Yes (additive — see Rollout).
 
 ---
 
@@ -219,21 +220,60 @@ reaches the database.
 
 Steps 2 and 3 can ship together; 4 is a follow-up once TTL has passed.
 
-### Migration SQL (for review — **not** applied)
+### Migration SQL (written, **not applied**)
+
+`prisma/migrations/20261010000000_add_token_index/migration.sql`:
 
 ```sql
 ALTER TABLE "verification_tokens"
   ADD COLUMN "tokenIndex" TEXT,
   ADD COLUMN "purpose" TEXT;
 CREATE UNIQUE INDEX "verification_tokens_tokenIndex_key"
-  ON "verification_tokens"("tokenIndex");
+  ON "verification_tokens" ("tokenIndex");
 ```
 
 Nullable columns with no default: existing rows get `NULL`, no table rewrite.
 
-> Per the audit constraints, **no migration was executed against any
-> environment.** The above is a proposal only and requires explicit approval
-> before it is applied anywhere.
+> **This migration has NOT been applied to any environment.** It requires
+> explicit approval and a deliberate deployment step. Rolling the code out
+> before the migration is safe (the resolver handles the columns being absent
+> only insofar as `safeTokenIndex` returns null and the fallback sweep is
+> used), but rolling the code out after the migration and before the writer
+> changes would leave rows without an index — which the fallback also handles.
+> Both orders are therefore supported; see Rollout.
+
+---
+
+## What was built
+
+| File | Purpose |
+|---|---|
+| `src/lib/security/crypto.ts` | `tokenIndex()` — HKDF-SHA256 keyed digest; fails closed without `AUTH_SECRET` |
+| `src/lib/security/token-lookup.ts` | `resolveVerificationToken()`, `consumeVerificationToken()`, `safeTokenIndex()` |
+| `src/app/api/auth/verify-email/route.ts` | Uses the resolver; purpose `verify` |
+| `src/app/api/auth/reset-password/route.ts` | Uses the resolver; purpose `reset` |
+| `src/app/api/auth/signup/route.ts`, `resend-verification`, `forgot-password` | Write `tokenIndex` + `purpose` on issue |
+| `prisma/schema.prisma` | `tokenIndex String? @unique`, `purpose String?` |
+| `src/lib/security/token-lookup.test.ts` | 20 tests |
+
+### Behaviour under each deployment state
+
+| State | Behaviour |
+|---|---|
+| Migration applied, writer deployed | One indexed read, one bcrypt compare. No sweep. |
+| Migration **not** applied | `safeTokenIndex` cannot persist an index → rows get `NULL` → bounded sweep fallback. Correct, just slower. |
+| `AUTH_SECRET` missing | `safeTokenIndex` returns null; sweep fallback still resolves tokens. Signup and reset keep working. |
+| Legacy rows already in the table | `tokenIndex = NULL`, `purpose = NULL` → sweep fallback; accepted by **both** routes, preserving the pre-change behaviour for tokens already sitting in users' inboxes. |
+
+### Tests
+
+20 tests covering: determinism, secret separation (a different `AUTH_SECRET`
+yields a different digest), fail-closed on missing/short secret, the indexed
+path performing no sweep, resolution beyond the old 50-row window, bcrypt
+remaining authoritative, expiry rejection, purpose mismatch, legacy rows
+accepted from either route, the fallback being capped at 50, no sweep for an
+unknown token when the index is active, operation without `AUTH_SECRET`, and
+`consumeVerificationToken` never throwing.
 
 ---
 

@@ -5,6 +5,7 @@ import { EmailService } from '@/lib/email/email-service';
 import { PASSWORD_RESET_TOKEN_TTL_MS } from '@/lib/utils/constants';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { hashToken } from '@/lib/security/crypto';
+import { safeTokenIndex } from '@/lib/security/token-lookup';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +63,11 @@ export async function POST(request: NextRequest) {
         data: {
           identifier: email,
           token: tokenHash,
+          // Keyed digest so the consuming route can find this row with an
+          // index instead of sweeping every unexpired token. Falls back to a
+          // NULL index if the key cannot be derived.
+          tokenIndex: safeTokenIndex(token),
+          purpose: 'reset',
           expires: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS),
         },
       });
