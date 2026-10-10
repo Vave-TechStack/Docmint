@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { createHmac } from 'node:crypto';
 
@@ -59,10 +59,16 @@ describe('POST /api/webhooks/razorpay', () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     process.env.RAZORPAY_WEBHOOK_SECRET = SECRET;
+    // Enable trusted proxy so x-forwarded-for headers are honored for rate limiting
+    process.env.TRUST_PROXY = 'true';
     // Silence the route's logging during tests
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    delete process.env.TRUST_PROXY;
   });
 
   describe('signature verification', () => {
@@ -275,6 +281,82 @@ describe('POST /api/webhooks/razorpay', () => {
       const res = await post(body, sign(body));
       expect(res.status).toBe(500);
       expect(await res.json()).toEqual({ success: false, error: 'Webhook processing failed' });
+    });
+  });
+
+  describe('IP whitelist — production only', () => {
+    const PROD_SECRET = 'prod_webhook_secret';
+    const PROD_BODY = JSON.stringify({ event: 'order.paid', payload: { order: { entity: { id: 'order_1', amount: 900, currency: 'INR' } } } });
+
+    function prodPost(body: string, signature: string, ip: string): Promise<Response> {
+      const request = new NextRequest('http://localhost:3000/api/webhooks/razorpay', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': ip,
+          'x-razorpay-signature': signature,
+        },
+        body,
+      });
+      return POST(request);
+    }
+
+    function prodSign(body: string): string {
+      return 'sha256=' + createHmac('sha256', PROD_SECRET).update(body).digest('hex');
+    }
+
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      vi.clearAllMocks();
+      process.env.RAZORPAY_WEBHOOK_SECRET = PROD_SECRET;
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('TRUST_PROXY', 'true');
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('allows whitelisted Razorpay IPs in production', async () => {
+      // 3.6.117.55 is in RAZORPAY_IPS
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '3.6.117.55');
+      expect(res.status).toBe(200);
+      expect((await res.json()).success).toBe(true);
+    });
+
+    it('allows loopback in production for local testing', async () => {
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '127.0.0.1');
+      expect(res.status).toBe(200);
+    });
+
+    it('blocks private RFC1918 ranges in production (10.x)', async () => {
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '10.0.0.1');
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ success: false, error: 'Access denied' });
+    });
+
+    it('blocks private RFC1918 ranges in production (172.16-31.x)', async () => {
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '172.16.0.1');
+      expect(res.status).toBe(403);
+    });
+
+    it('blocks private RFC1918 ranges in production (192.168.x)', async () => {
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '192.168.1.1');
+      expect(res.status).toBe(403);
+    });
+
+    it('blocks unknown public IPs in production', async () => {
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '8.8.8.8');
+      expect(res.status).toBe(403);
+    });
+
+    it('allows non-whitelisted IPs in development (no NODE_ENV=production)', async () => {
+      vi.unstubAllEnvs();
+      const res = await prodPost(PROD_BODY, prodSign(PROD_BODY), '8.8.8.8');
+      expect(res.status).toBe(200);
     });
   });
 });

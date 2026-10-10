@@ -3,6 +3,15 @@ import { auth } from '@/lib/auth';
 import { TemplateEngine } from '@/lib/engine/template-engine';
 import { findSampleById, sampleToTemplateData } from '@/lib/data/sample-templates';
 import { validateVariableDefaultImages } from '@/lib/utils/image-upload';
+import { validateExternalImageUrl } from '@/lib/security/image-url';
+import { requireUserScope } from '@/lib/security/authorization';
+import {
+  assertSameOrigin,
+  readJsonBody,
+  isPlainObject,
+  cleanString,
+  ValidationError,
+} from '@/lib/security/request';
 
 export async function GET(
   _request: NextRequest,
@@ -57,17 +66,21 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
+
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    const { id } = await params;
+    const body = await readJsonBody(request);
+    if (!isPlainObject(body)) {
+      return NextResponse.json({ success: false, error: 'Invalid request body' }, { status: 400 });
     }
 
-    const { id } = await params;
-    const body = await request.json();
-
     // Enforce the shared image whitelist + size policy on variable defaults
-    const imageError = validateVariableDefaultImages((body as { variables?: unknown }).variables);
+    const imageError = validateVariableDefaultImages(body.variables);
     if (imageError) {
       return NextResponse.json(
         { success: false, error: imageError },
@@ -75,14 +88,74 @@ export async function PATCH(
       );
     }
 
+    // Build an explicit allowlist of mutable fields instead of forwarding the
+    // whole body: `organizationId`, `slug`, `usageCount` and `version` are all
+    // settable on the Prisma model, so a raw spread let a caller re-parent a
+    // template to another tenant.
+    const input: Record<string, unknown> = {};
+    if (body.name !== undefined) input.name = cleanString(body.name, 200, { required: true });
+    if (body.description !== undefined) input.description = cleanString(body.description, 1000);
+    if (body.category !== undefined) input.category = cleanString(body.category, 64, { required: true });
+    if (body.htmlTemplate !== undefined) input.htmlTemplate = cleanString(body.htmlTemplate, 500_000);
+    if (body.content !== undefined && isPlainObject(body.content)) input.content = body.content;
+    if (Array.isArray(body.variables)) input.variables = body.variables;
+    if (body.thumbnail !== undefined) {
+      // Any signed-in org member can set this (there is no admin check), and it
+      // renders through `<Image unoptimized>`, which bypasses
+      // `images.remotePatterns` entirely. `cleanString` only capped length, so
+      // this accepted any http(s) URL and made the browser request it.
+      const thumbnail = validateExternalImageUrl(body.thumbnail, {
+        allowEmpty: true,
+        field: 'thumbnail',
+      });
+      if (!thumbnail.valid) {
+        return NextResponse.json(
+          { success: false, error: thumbnail.reason },
+          { status: 400 }
+        );
+      }
+      input.thumbnail = thumbnail.value ? thumbnail.value : null;
+    }
+
+    const visibility = cleanString(body.visibility, 20).toUpperCase();
+    const allowedVisibility = ['PUBLIC', 'PRIVATE', 'ORGANIZATION', 'PREMIUM', 'AI'];
+    if (visibility) {
+      if (!allowedVisibility.includes(visibility)) {
+        return NextResponse.json(
+          { success: false, error: `visibility must be one of: ${allowedVisibility.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      input.visibility = visibility;
+    }
+
+    for (const flag of ['isPremium', 'isActive'] as const) {
+      if (body[flag] !== undefined) {
+        if (typeof body[flag] !== 'boolean') {
+          return NextResponse.json(
+            { success: false, error: `${flag} must be a boolean` },
+            { status: 400 }
+          );
+        }
+        input[flag] = body[flag];
+      }
+    }
+
+    if (Object.keys(input).length === 0) {
+      return NextResponse.json({ success: false, error: 'No valid fields to update' }, { status: 400 });
+    }
+
     const template = await TemplateEngine.update(
       id,
-      body,
-      session.user.organizationId!
+      input as Parameters<typeof TemplateEngine.update>[1],
+      scope.organizationId
     );
 
     return NextResponse.json({ success: true, data: template });
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
     console.error('Template update error:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to update template' },
@@ -92,20 +165,24 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
 
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+
+  try {
     const { id } = await params;
-    await TemplateEngine.delete(id, session.user.organizationId!);
+    await TemplateEngine.delete(id, scope.organizationId);
 
     return NextResponse.json({ success: true, message: 'Template deleted' });
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
     console.error('Template delete error:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to delete template' },

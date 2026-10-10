@@ -7,6 +7,7 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ANNUAL_PREMIUM_PRICE } from '@/lib/utils/constants';
 import {
   Crown,
   Loader2,
@@ -55,7 +56,9 @@ export default function SubscriptionPage() {
       const res = await fetch('/api/subscriptions');
       const data = await res.json();
       if (data.success && data.data) {
-        const sub = data.data[0] || null;
+        // GET /api/subscriptions returns a single object; tolerate an array
+        // (older/future shapes) so paid users always see their plan.
+        const sub = Array.isArray(data.data) ? data.data[0] : data.data;
         setSubscription(sub);
         setDaysLeft(sub ? Math.ceil((new Date(sub.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 0);
       }
@@ -135,7 +138,9 @@ export default function SubscriptionPage() {
                 </div>
                 <div className="text-right">
                   <div className="text-3xl font-bold">₹{subscription.amount / 100}</div>
-                  <div className="text-sm text-gray-500">per month</div>
+                  <div className="text-sm text-gray-500">
+                    {subscription.amount === ANNUAL_PREMIUM_PRICE * 100 ? 'per year' : 'per month'}
+                  </div>
                 </div>
               </div>
 

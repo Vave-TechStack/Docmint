@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
@@ -19,6 +19,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { replaceSvgDataUris } from '@/lib/utils/image-placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
 
 interface SharedDocument {
   id: string;
@@ -75,6 +76,27 @@ export default function SharedDocumentPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchDocument();
   }, [token, fetchDocument]);
+
+  /**
+   * Sanitize the shared HTML before it reaches `dangerouslySetInnerHTML`.
+   *
+   * The content of a share link is attacker-controlled for anyone who can
+   * create a document: template HTML and document variable values are both
+   * interpolated raw, and the share route is unauthenticated. Rendering it
+   * unsanitized is stored XSS on the DocMint origin — it steals the session of
+   * every anonymous visitor who opens the link, and the downloaded .html file
+   * is not sandboxed either.
+   *
+   * Order matters: sanitize the document first, then inline the SVG data URIs.
+   * `replaceSvgDataUris` promotes an inert <img src="data:image/svg+xml"> to
+   * live inline <svg>, and each payload is independently sanitized inside
+   * `cleanSvgMarkup`.
+   */
+  const sanitizedShareHtml = useMemo(() => {
+    const raw = sharedDoc?.htmlContent;
+    if (!raw) return '';
+    return replaceSvgDataUris(sanitizeHtmlFragment(raw));
+  }, [sharedDoc]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -258,7 +280,7 @@ export default function SharedDocumentPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm">
             <div
               className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: replaceSvgDataUris(sharedDoc.htmlContent) }}
+              dangerouslySetInnerHTML={{ __html: sanitizedShareHtml }}
             />
           </div>
         )}

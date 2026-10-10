@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { timingSafeEqualStr } from '@/lib/security/crypto';
+import { logPaymentEvent, SecurityEventAction, createSecurityContext } from '@/lib/security/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,15 +25,20 @@ const RAZORPAY_IPS = new Set([
  * Check if request comes from a whitelisted IP
  */
 function isWhitelistedIP(ip: string): boolean {
-  // Allow localhost and private IPs for testing
+  if (RAZORPAY_IPS.has(ip)) return true;
+
+  // Loopback is always allowed so local testing works.
   if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
-  if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.')) return true;
-  
-  return RAZORPAY_IPS.has(ip);
+
+  return false;
 }
 
 /**
  * Verify Razorpay webhook signature
+ *
+ * Constant-time comparison. A plain `===` short-circuits on the first
+ * differing byte, which lets an attacker who can measure response latency
+ * recover the expected MAC byte-by-byte and forge webhook payloads.
  */
 async function verifyWebhookSignature(body: string, signature: string, secret: string): Promise<boolean> {
   const { createHmac } = await import('crypto');
@@ -41,7 +48,7 @@ async function verifyWebhookSignature(body: string, signature: string, secret: s
   
   // Razorpay sends signature prefixed with "sha256="
   const receivedSignature = signature.replace(/^sha256=/, '');
-  return expectedSignature === receivedSignature;
+  return timingSafeEqualStr(expectedSignature, receivedSignature);
 }
 
 /**
@@ -65,28 +72,56 @@ export async function POST(request: NextRequest) {
     // (Already handled by Next.js route convention, but double-check)
     
     // 0b. IP Whitelist Check (defense in depth)
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    const realIp = request.headers.get('x-real-ip');
-    const clientIp = forwardedFor?.split(',')[0]?.trim() || realIp || request.headers.get('x-razorpay-forwarded-ip') || 'unknown';
+    //
+    // NOTE: this is a *secondary* filter only. The authoritative control is the
+    // HMAC signature below — an unauthenticated caller cannot produce a valid
+    // one, so bypassing this check gains an attacker nothing.
+    //
+    // The previous logic was:
+    //   if (production && clientIp !== 'unknown') { ...block... }
+    // which fails OPEN: simply stripping the forwarding headers made the whole
+    // check evaporate. Inverted so a missing/unknown IP is a rejection in
+    // production rather than an unverified pass. Private ranges stay allowed so
+    // local and containerised testing still works.
+    // Uses the shared extractor so the same trust order applies here as
+    // everywhere else: `x-real-ip` (set by nginx to `$remote_addr`, not
+    // client-forgeable) is preferred, and `x-forwarded-for` is read from the
+    // RIGHT, because `proxy_add_x_forwarded_for` appends the real client IP
+    // after whatever the caller sent. Reading the first hop — as this route
+    // previously did — took an entirely attacker-controlled value.
+    const clientIp = getClientIp(request);
+    const context = createSecurityContext(request);
     
-    // Skip IP check if in dev mode
-    if (process.env.NODE_ENV === 'production' && clientIp !== 'unknown') {
-      if (!isWhitelistedIP(clientIp)) {
-        console.warn(`[Webhook] Blocked request from unauthorized IP: ${clientIp}`);
-        return NextResponse.json({ success: false, error: 'Access denied' }, { status: 403 });
-      }
+    if (process.env.NODE_ENV === 'production' && !isWhitelistedIP(clientIp)) {
+      await logPaymentEvent(
+        SecurityEventAction.WEBHOOK_IP_BLOCKED,
+        false,
+        'Webhook request from unauthorized IP',
+        { ...context, ipAddress: clientIp, metadata: { reason: 'ip_not_whitelisted' } }
+      );
+      return NextResponse.json({ success: false, error: 'Access denied' }, { status: 403 });
     }
     
     // 0c. Rate limiting: max 10 requests per second per IP
     if (!checkRateLimit(`webhook:${clientIp}`, 10, 1000)) {
-      console.warn(`[Webhook] Rate limit exceeded for IP: ${clientIp}`);
+      await logPaymentEvent(
+        SecurityEventAction.WEBHOOK_RATE_LIMITED,
+        false,
+        'Webhook rate limit exceeded',
+        { ...context, ipAddress: clientIp, metadata: { reason: 'rate_limited' } }
+      );
       return NextResponse.json({ success: false, error: 'Too many requests' }, { status: 429 });
     }
     
     // 0d. Check for required signature header
     const signature = request.headers.get('x-razorpay-signature') || '';
     if (!signature) {
-      console.warn('[Webhook] Missing x-razorpay-signature header');
+      await logPaymentEvent(
+        SecurityEventAction.WEBHOOK_SIGNATURE_INVALID,
+        false,
+        'Missing webhook signature header',
+        { ...context, ipAddress: clientIp, metadata: { reason: 'missing_signature' } }
+      );
       return NextResponse.json({ success: false, error: 'Missing signature' }, { status: 401 });
     }
 
@@ -94,7 +129,12 @@ export async function POST(request: NextRequest) {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     
     if (!webhookSecret) {
-      console.error('RAZORPAY_WEBHOOK_SECRET not configured in .env');
+      await logPaymentEvent(
+        SecurityEventAction.CONFIG_ERROR,
+        false,
+        'Webhook secret not configured',
+        { ...context, ipAddress: clientIp, metadata: { reason: 'missing_webhook_secret' } }
+      );
       return NextResponse.json({ success: false, error: 'Webhook not configured' }, { status: 500 });
     }
 
@@ -102,7 +142,12 @@ export async function POST(request: NextRequest) {
 
     const isValid = await verifyWebhookSignature(bodyText, signature, webhookSecret);
     if (!isValid) {
-      console.error('Invalid webhook signature');
+      await logPaymentEvent(
+        SecurityEventAction.WEBHOOK_SIGNATURE_INVALID,
+        false,
+        'Invalid webhook signature',
+        { ...context, ipAddress: clientIp, metadata: { reason: 'invalid_signature' } }
+      );
       return NextResponse.json({ success: false, error: 'Invalid signature' }, { status: 401 });
     }
 
@@ -114,7 +159,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid webhook payload' }, { status: 400 });
     }
 
-    console.log(`[Webhook] Received: ${eventName}`);
+    await logPaymentEvent(
+      SecurityEventAction.WEBHOOK_RECEIVED,
+      true,
+      `Webhook received: ${eventName}`,
+      { ...context, ipAddress: clientIp, metadata: { eventName } }
+    );
 
     // ─── 3. Handle different event types ───
     switch (eventName) {
@@ -152,6 +202,13 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        await logPaymentEvent(
+          SecurityEventAction.PAYMENT_CAPTURED,
+          true,
+          'Payment captured',
+          { ...context, ipAddress: clientIp, metadata: { razorpayPaymentId, razorpayOrderId, status } }
+        );
+
         break;
       }
 
@@ -164,7 +221,12 @@ export async function POST(request: NextRequest) {
           data: { status: 'FAILED' },
         });
 
-        console.log(`[Webhook] Payment failed: ${failedPayment.id}`);
+        await logPaymentEvent(
+          SecurityEventAction.PAYMENT_FAILED,
+          true,
+          'Payment failed',
+          { ...context, ipAddress: clientIp, metadata: { razorpayPaymentId: failedPayment.id } }
+        );
         break;
       }
 

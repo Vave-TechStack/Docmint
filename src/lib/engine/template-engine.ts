@@ -7,6 +7,28 @@ import type { TemplateData, TemplateVariable, TemplateVisibility } from '@/types
 import { DocumentEngine } from './document-engine';
 
 /**
+ * Explicit allowlists for the user-controlled list parameters. `sortBy` in
+ * particular must never be interpolated into an `orderBy` object without
+ * validation, since it becomes a column name.
+ */
+const TEMPLATE_VISIBILITIES = [
+  'PUBLIC',
+  'PRIVATE',
+  'ORGANIZATION',
+  'PREMIUM',
+  'AI',
+] as const;
+
+const TEMPLATE_SORT_FIELDS = [
+  'name',
+  'createdAt',
+  'updatedAt',
+  'usageCount',
+  'isPremium',
+  'documentCategory',
+] as const;
+
+/**
  * DocMint Template Engine
  * Manages templates, variable detection, and template import/export.
  */
@@ -166,17 +188,40 @@ export class TemplateEngine {
     return template as unknown as TemplateData;
   }
 
+  /**
+   * Fetch a template by id, scoped to what `tenantId` is allowed to see.
+   *
+   * SECURITY: this used to build `where = { id }` and only add a visibility
+   * filter *when a tenantId was supplied*. Every caller on the public instant
+   * path (`/api/instant/preview`, `/api/instant/download`, `/api/instant/sample`)
+   * omitted it, so an unauthenticated request could read any template row by
+   * id — including `PRIVATE` (the schema default) and `ORGANIZATION` templates
+   * belonging to another tenant, and their full `htmlTemplate` source.
+   *
+   * The rule is now fail-closed:
+   *  - with a tenantId: the tenant's own templates (any visibility) plus the
+   *    shared `PUBLIC`/`PREMIUM` ones;
+   *  - without a tenantId (anonymous): only `PUBLIC` templates. `PRIVATE` and
+   *    `ORGANIZATION` are other tenants' data and `PREMIUM`/`AI` are gated
+   *    content whose HTML must not leave the paid/authenticated paths.
+   *
+   * `isActive` is always enforced — a deactivated template must not be
+   * downloadable through a direct id request.
+   */
   static async getById(id: string, tenantId?: string | null): Promise<TemplateData | null> {
-    const where: Record<string, unknown> = { id };
-    if (tenantId) {
-      const orClauses: Record<string, unknown>[] = [
-        { organizationId: tenantId },
-        { visibility: 'PUBLIC' },
-        { visibility: 'PREMIUM' },
-      ];
-      where.OR = orClauses;
-    }
-    const template = await prisma.template.findFirst({ where });
+    const orClauses: Record<string, unknown>[] = tenantId
+      ? [
+          { organizationId: tenantId },
+          { visibility: { in: ['PUBLIC', 'PREMIUM'] } },
+        ]
+      : [
+          // Anonymous: the public catalogue only.
+          { visibility: 'PUBLIC' },
+        ];
+
+    const template = await prisma.template.findFirst({
+      where: { id, isActive: true, OR: orClauses },
+    });
     return template as unknown as TemplateData | null;
   }
 
@@ -197,9 +242,23 @@ export class TemplateEngine {
     if (options.documentCategory) {
       conditions.push({ documentCategory: options.documentCategory });
     }
-    if (options.visibility) {
+
+    /**
+     * `visibility` and `sortBy` arrive straight from the query string.
+     *
+     * - `visibility` was previously asserted with `as TemplateVisibility`, which
+     *   silenced the compiler without validating anything: any unrecognised
+     *   value reached Prisma and raised an enum error (opaque 500).
+     * - `sortBy` was used directly as an `orderBy` key, so any arbitrary
+     *   string was forwarded as a column name.
+     *
+     * Both are now checked against explicit allowlists; unknown values are
+     * ignored, which is the same behaviour as omitting the filter.
+     */
+    if (options.visibility && TEMPLATE_VISIBILITIES.includes(options.visibility as TemplateVisibility)) {
       conditions.push({ visibility: options.visibility as TemplateVisibility });
     }
+
     if (options.isPremium !== undefined) {
       conditions.push({ isPremium: options.isPremium });
     }
@@ -236,13 +295,23 @@ export class TemplateEngine {
       Object.assign(where, conditions[0]);
     }
 
-    const page = options.page || 1;
-    const pageSize = options.pageSize || 20;
+
+    // Clamp rather than trust: an unbounded pageSize turns one request into a
+    // full-table scan, and a negative/absurd page produced `NaN` skips.
+    const page = Number.isFinite(options.page) && (options.page ?? 0) >= 1 ? Math.floor(options.page as number) : 1;
+    const pageSize =
+      Number.isFinite(options.pageSize) && (options.pageSize ?? 0) >= 1
+        ? Math.min(100, Math.floor(options.pageSize as number))
+        : 20;
+
+    const sortBy = TEMPLATE_SORT_FIELDS.includes(options.sortBy as (typeof TEMPLATE_SORT_FIELDS)[number])
+      ? (options.sortBy as string)
+      : 'usageCount';
 
     const [data, total] = await Promise.all([
       prisma.template.findMany({
         where,
-        orderBy: { [options.sortBy || 'usageCount']: options.sortOrder || 'desc' },
+        orderBy: { [sortBy]: options.sortOrder || 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {

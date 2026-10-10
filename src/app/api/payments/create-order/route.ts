@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { PaymentService } from '@/lib/payment/razorpay';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { readJsonBody, cleanString, boundedInt, ValidationError } from '@/lib/security/request';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,8 +15,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { type, amount } = body;
+    const body = await readJsonBody(request);
+    const type = cleanString(body.type, 20).toLowerCase();
+    const amount = boundedInt(body.amount, { min: 1, max: 10_000_000 });
 
     // For subscription payments, require auth
     if (type === 'subscription') {
@@ -54,6 +56,9 @@ export async function POST(request: NextRequest) {
       data: order,
     });
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
     console.error('Order creation error:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to create payment order' },

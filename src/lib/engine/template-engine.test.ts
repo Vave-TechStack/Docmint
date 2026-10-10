@@ -339,13 +339,13 @@ describe('TemplateEngine', () => {
       expect(result).toEqual(mockTemplate);
       const where = (prisma.template.findFirst as ReturnType<typeof vi.fn>).mock.calls[0][0].where;
       expect(where.id).toBe('tmpl-1');
+      expect(where.isActive).toBe(true);
       expect(where.OR).toBeDefined();
       expect(where.OR).toContainEqual({ organizationId: 'org-1' });
-      expect(where.OR).toContainEqual({ visibility: 'PUBLIC' });
-      expect(where.OR).toContainEqual({ visibility: 'PREMIUM' });
+      expect(where.OR).toContainEqual({ visibility: { in: ['PUBLIC', 'PREMIUM'] } });
     });
 
-    it('should return template when found without tenant ID', async () => {
+    it('scopes anonymous callers to the system catalogue (the cross-tenant IDOR)', async () => {
       (prisma.template.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplate);
 
       const result = await TemplateEngine.getById('tmpl-1');
@@ -353,7 +353,10 @@ describe('TemplateEngine', () => {
       expect(result).toEqual(mockTemplate);
       const where = (prisma.template.findFirst as ReturnType<typeof vi.fn>).mock.calls[0][0].where;
       expect(where.id).toBe('tmpl-1');
-      expect(where.OR).toBeUndefined();
+      // Fail-closed: without a tenant the query must NOT become `{ id }`.
+      // Previously it did, so an unauthenticated caller could read any other
+      // tenant's PRIVATE (schema default) or ORGANIZATION template by id.
+      expect(where.OR).toEqual([{ visibility: 'PUBLIC' }]);
     });
 
     it('should return null when template is not found', async () => {

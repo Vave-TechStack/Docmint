@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { DocumentEngine } from '@/lib/engine/document-engine';
+import { requireUserScope } from '@/lib/security/authorization';
+import { assertSameOrigin, readJsonBody, isPlainObject } from '@/lib/security/request';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
+
   try {
     const { id } = await params;
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const document = await DocumentEngine.getById(id, session.user.organizationId!);
+    const document = await DocumentEngine.getById(id, scope.organizationId);
     if (!document) {
       return NextResponse.json({ success: false, error: 'Document not found' }, { status: 404 });
     }
@@ -32,19 +31,24 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
+
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+
   try {
     const { id } = await params;
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    const body = await readJsonBody(request);
+    if (!isPlainObject(body)) {
+      return NextResponse.json({ success: false, error: 'Invalid request body' }, { status: 400 });
     }
 
-    const body = await request.json();
     const document = await DocumentEngine.update(
       id,
       body,
-      session.user.organizationId!,
-      session.user.id
+      scope.organizationId,
+      scope.userId
     );
 
     return NextResponse.json({ success: true, data: document });
@@ -61,14 +65,15 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
+
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+
   try {
     const { id } = await params;
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-
-    await DocumentEngine.delete(id, session.user.organizationId!, session.user.id);
+    await DocumentEngine.delete(id, scope.organizationId, scope.userId);
 
     return NextResponse.json({ success: true, message: 'Document deleted' });
   } catch (error) {
@@ -81,17 +86,18 @@ export async function DELETE(
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
+
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+
   try {
     const { id } = await params;
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const document = await DocumentEngine.duplicate(id, session.user.organizationId!, session.user.id);
+    const document = await DocumentEngine.duplicate(id, scope.organizationId, scope.userId);
 
     return NextResponse.json({ success: true, data: document });
   } catch (error) {

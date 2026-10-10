@@ -64,13 +64,26 @@ export async function POST(request: NextRequest) {
     // payment cannot be replayed for unlimited downloads. If the Razorpay
     // order.paid webhook hasn't recorded the payment yet (slow webhook vs.
     // the client's own success callback), record it here in the same step.
-    const consumed = await prisma.payment.updateMany({
+    let consumed = await prisma.payment.updateMany({
       where: { razorpayPaymentId: paymentId, usedAt: null },
       data: { usedAt: new Date() },
     });
+
     if (consumed.count === 0) {
-      const existing = await prisma.payment.findUnique({
-        where: { razorpayPaymentId: paymentId },
+      // The order.paid webhook may have landed first and recorded the payment
+      // by order id with a null razorpayPaymentId. Claim that row instead of
+      // creating a second one — otherwise the unique razorpayOrderId index
+      // makes the create below fail and blocks a customer who has paid.
+      consumed = await prisma.payment.updateMany({
+        where: { razorpayOrderId: orderId, razorpayPaymentId: null, usedAt: null },
+        data: { razorpayPaymentId: paymentId, usedAt: new Date() },
+      });
+    }
+
+    if (consumed.count === 0) {
+      const existing = await prisma.payment.findFirst({
+        where: { OR: [{ razorpayPaymentId: paymentId }, { razorpayOrderId: orderId }] },
+        select: { usedAt: true },
       });
       if (existing?.usedAt) {
         return NextResponse.json(

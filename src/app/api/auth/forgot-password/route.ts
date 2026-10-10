@@ -3,7 +3,8 @@ import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { EmailService } from '@/lib/email/email-service';
 import { PASSWORD_RESET_TOKEN_TTL_MS } from '@/lib/utils/constants';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { hashToken } from '@/lib/security/crypto';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,14 +39,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // The per-address bucket alone is keyed entirely on attacker-supplied
+    // input, so a loop over distinct target addresses was unbounded and each
+    // accepted call cost a real outbound email. This per-IP ceiling bounds
+    // mail volume regardless of how many addresses are cycled.
+    if (!checkRateLimit(`forgot-password:ip:${getClientIp(request)}`, 5, 3_600_000)) {
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'If your email is registered, a password reset link has been sent.',
+        },
+        { status: 429 }
+      );
+    }
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (user && user.isActive) {
       // "r_" prefix marks this as a reset token (see reset-password route).
       const token = `r_${crypto.randomBytes(32).toString('hex')}`;
+      const tokenHash = await hashToken(token);
       await prisma.verificationToken.create({
         data: {
           identifier: email,
-          token,
+          token: tokenHash,
           expires: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS),
         },
       });

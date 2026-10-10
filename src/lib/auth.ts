@@ -6,6 +6,18 @@ import type { Provider } from 'next-auth/providers';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { logAuthEvent, SecurityEventAction, logSystemEvent } from '@/lib/security/logger';
+
+/**
+ * Mask an email for logging: us***@domain.com
+ *
+ * Re-exported from the security logger, which owns the implementation. It
+ * lives there rather than here so the logger does not have to import this
+ * module: `@/lib/auth` initialises NextAuth at import time, so a logger →
+ * auth import forms a cycle and made every test that mocks `auth` also have to
+ * mock this helper.
+ */
+export { maskEmail } from '@/lib/security/logger';
 
 /**
  * DocMint NextAuth v5 Configuration
@@ -75,7 +87,12 @@ if (process.env.MICROSOFT_CLIENT_ID) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function authorizeCallback(credentials: any): Promise<any> {
   if (!credentials?.email || !credentials?.password) {
-    console.error('[AUTH] Missing credentials:', JSON.stringify(credentials));
+    await logAuthEvent(
+      SecurityEventAction.LOGIN_FAILURE,
+      false,
+      'Missing credentials',
+      { email: credentials?.email, metadata: { reason: 'missing_credentials' } }
+    );
     return null;
   }
 
@@ -85,7 +102,12 @@ export async function authorizeCallback(credentials: any): Promise<any> {
   // Brute-force guard: at most 10 failed-or-successful attempts per minute
   // per email, across all IPs (the authorize callback has no request/IP).
   if (!checkRateLimit(`login:${email}`, 10, 60_000)) {
-    console.warn('[AUTH] Login rate limit hit for:', email);
+    await logAuthEvent(
+      SecurityEventAction.LOGIN_RATE_LIMITED,
+      false,
+      'Login rate limit exceeded',
+      { email, metadata: { reason: 'rate_limited' } }
+    );
     return null;
   }
 
@@ -96,27 +118,59 @@ export async function authorizeCallback(credentials: any): Promise<any> {
     });
 
     if (!user) {
-      console.error('[AUTH] User not found:', email);
+      await logAuthEvent(
+        SecurityEventAction.LOGIN_FAILURE,
+        false,
+        'User not found',
+        { email, metadata: { reason: 'user_not_found' } }
+      );
       return null;
     }
     
     if (!user.passwordHash) {
-      console.error('[AUTH] No password hash for user:', email);
+      await logAuthEvent(
+        SecurityEventAction.LOGIN_FAILURE,
+        false,
+        'No password hash for user',
+        { email, metadata: { reason: 'no_password_hash' } }
+      );
       return null;
     }
 
     if (!user.isActive) {
-      console.error('[AUTH] User is inactive:', email);
+      await logAuthEvent(
+        SecurityEventAction.LOGIN_FAILURE,
+        false,
+        'User is inactive',
+        { email, metadata: { reason: 'inactive', organizationId: user.organizationId } }
+      );
       return null;
     }
 
-    console.log('[AUTH] User found, checking password...');
     const isValid = await bcrypt.compare(password, user.passwordHash);
     
     if (!isValid) {
-      console.error('[AUTH] Invalid password for:', email);
+      await logAuthEvent(
+        SecurityEventAction.LOGIN_FAILURE,
+        false,
+        'Invalid password',
+        { email, metadata: { reason: 'invalid_password' } }
+      );
       return null;
     }
+
+    await logAuthEvent(
+      SecurityEventAction.LOGIN_SUCCESS,
+      true,
+      'Login successful',
+      { 
+        email, 
+        userId: user.id, 
+        organizationId: user.organizationId, 
+        role: user.role,
+        metadata: { provider: 'credentials' }
+      }
+    );
 
     return {
       id: user.id,
@@ -129,7 +183,12 @@ export async function authorizeCallback(credentials: any): Promise<any> {
       emailVerified: user.emailVerified?.toISOString() || null,
     };
   } catch (err) {
-    console.error('[AUTH] Prisma error in authorize callback:', err);
+    await logAuthEvent(
+      SecurityEventAction.LOGIN_FAILURE,
+      false,
+      'Database error during login',
+      { email, metadata: { reason: 'db_error', error: String(err) } }
+    );
     return null;
   }
 }
@@ -165,19 +224,34 @@ export async function signInCallback({ user, account }: any): Promise<boolean> {
 
     // No auto sign-up via OAuth: the account must already exist in DocMint.
     if (!existing) {
-      console.warn('[AUTH] OAuth sign-in rejected: no DocMint account for', user.email);
+      await logAuthEvent(
+        SecurityEventAction.OAUTH_SIGNIN_REJECTED,
+        false,
+        'OAuth sign-in rejected: no DocMint account',
+        { email: user.email, metadata: { provider: account.provider, reason: 'no_account' } }
+      );
       return false;
     }
 
     // Disabled accounts cannot sign in through any provider.
     if (!existing.isActive) {
-      console.warn('[AUTH] OAuth sign-in rejected: account disabled for', user.email);
+      await logAuthEvent(
+        SecurityEventAction.OAUTH_SIGNIN_REJECTED,
+        false,
+        'OAuth sign-in rejected: account disabled',
+        { email: user.email, metadata: { provider: account.provider, reason: 'disabled' } }
+      );
       return false;
     }
 
     // The anti-account-takeover control: the account email must be verified.
     if (!existing.emailVerified) {
-      console.warn('[AUTH] OAuth sign-in rejected: email not verified for', user.email);
+      await logAuthEvent(
+        SecurityEventAction.OAUTH_SIGNIN_REJECTED,
+        false,
+        'OAuth sign-in rejected: email not verified',
+        { email: user.email, metadata: { provider: account.provider, reason: 'email_not_verified' } }
+      );
       return false;
     }
 
@@ -189,6 +263,13 @@ export async function signInCallback({ user, account }: any): Promise<boolean> {
         name: user.name || existing.name,
       },
     });
+
+    await logAuthEvent(
+      SecurityEventAction.OAUTH_SIGNIN_SUCCESS,
+      true,
+      'OAuth sign-in successful',
+      { email: user.email, userId: existing.id, organizationId: existing.organizationId, role: existing.role, metadata: { provider: account.provider } }
+    );
     return true;
   }
 
@@ -225,6 +306,7 @@ export async function jwtCallback({ token, user, account }: any): Promise<any> {
       token.organizationName = customUser.organizationName;
       token.role = customUser.role || 'USER';
       token.emailVerified = customUser.emailVerified;
+      token.passwordVersion = customUser.passwordVersion ?? 0;
     }
     // For OAuth sign-ins, fetch organization from DB
     if (account && account.provider !== 'credentials' && token?.email) {
@@ -237,13 +319,24 @@ export async function jwtCallback({ token, user, account }: any): Promise<any> {
           token.organizationId = dbUser.organizationId;
           token.organizationName = dbUser.organization?.name;
           token.role = dbUser.role;
+          token.passwordVersion = dbUser.passwordVersion ?? 0;
         }
       } catch (dbErr) {
-        console.error('[AUTH] DB error in jwtCallback:', dbErr);
+        await logSystemEvent(
+          SecurityEventAction.DB_ERROR,
+          false,
+          'Database error in jwtCallback',
+          { metadata: { error: String(dbErr) } }
+        );
       }
     }
   } catch (err) {
-    console.error('[AUTH] Error in jwtCallback:', err);
+    await logSystemEvent(
+      SecurityEventAction.DB_ERROR,
+      false,
+      'Error in jwtCallback',
+      { metadata: { error: String(err) } }
+    );
   }
   return token;
 }
@@ -262,9 +355,15 @@ export async function sessionCallback({ session, token }: any): Promise<any> {
       session.user.organizationName = token.organizationName as string | undefined;
       session.user.role = (token.role as string) || 'USER';
       session.user.emailVerified = token.emailVerified;
+      session.user.passwordVersion = token.passwordVersion as number | undefined;
     }
   } catch (err) {
-    console.error('[AUTH] Error in sessionCallback:', err);
+    await logSystemEvent(
+      SecurityEventAction.DB_ERROR,
+      false,
+      'Error in sessionCallback',
+      { metadata: { error: String(err) } }
+    );
   }
   return session;
 }
@@ -275,24 +374,32 @@ const authConfig = (() => {
     return NextAuth({
       trustHost: true,
       secret: process.env.AUTH_SECRET,
-  session: { strategy: 'jwt' },
-  pages: {
-    signIn: '/login',
-    signOut: '/',
-    error: '/login',
-    verifyRequest: '/verify-email',
-    newUser: '/dashboard',
-  },
-  providers,
-  callbacks: {
-    jwt: jwtCallback,
-    session: sessionCallback,
-    signIn: signInCallback,
-    redirect: redirectCallback,
-  },
-});
+      session: { strategy: 'jwt' },
+      pages: {
+        signIn: '/login',
+        signOut: '/',
+        error: '/login',
+        verifyRequest: '/verify-email',
+        newUser: '/dashboard',
+      },
+      providers,
+      callbacks: {
+        jwt: jwtCallback,
+        session: sessionCallback,
+        signIn: signInCallback,
+        redirect: redirectCallback,
+      },
+    });
   } catch (err) {
-    console.error('[AUTH] NextAuth initialization failed:', err);
+    // Not awaited: this runs during module initialization, and the logger
+    // writes an audit row for startup failures. Fire-and-forget so a logger
+    // failure cannot mask or replace the original initialization error.
+    void logSystemEvent(
+      SecurityEventAction.CONFIG_ERROR,
+      false,
+      'NextAuth initialization failed',
+      { metadata: { error: String(err) } }
+    ).catch(() => {});
     throw err;
   }
 })();
@@ -317,6 +424,7 @@ declare module 'next-auth' {
       role?: string;
       mobile?: string;
       emailVerified?: string | null;
+      passwordVersion?: number;
     } & DefaultSession['user'];
   }
 }

@@ -1,12 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { DocumentEngine, extractBodyContent } from '@/lib/engine/document-engine';
 import { replaceSvgDataUris } from '@/lib/utils/image-placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import {
+  SHARE_PASSWORD_MAX_ATTEMPTS,
+  SHARE_PASSWORD_WINDOW_MS,
+  sharePasswordRateLimitKeys,
+} from '@/lib/security/share-limit';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
   try {
@@ -17,7 +24,7 @@ export async function POST(
       where: { token },
       include: {
         document: {
-          select: { id: true, title: true, htmlContent: true, organizationId: true },
+          select: { id: true, title: true, htmlContent: true, organizationId: true, deletedAt: true, status: true },
         },
       },
     });
@@ -43,6 +50,14 @@ export async function POST(
       );
     }
 
+    // Defense in depth: reject if the underlying document has been soft-deleted
+    if (!share.document || share.document.deletedAt || share.document.status === 'DELETED') {
+      return NextResponse.json(
+        { success: false, error: 'Share link not found or revoked' },
+        { status: 404 }
+      );
+    }
+
     // ─── Password gate ───
     // The view route verifies the share password, so the download endpoint
     // must too — otherwise a password-protected share could be downloaded by
@@ -59,6 +74,27 @@ export async function POST(
             requiresPassword: true,
           },
           { status: 401 }
+        );
+      }
+
+      /**
+       * Throttle guesses before running bcrypt.
+       *
+       * This endpoint is public and the token is the only secret, so without
+       * a budget the share password was brute-forceable at network speed. The
+       * budget is keyed on the share token and the client IP together: per-token
+       * alone lets one attacker lock out the legitimate recipient, per-IP alone
+       * does not stop a distributed attempt.
+       */
+      const clientIp = getClientIp(request);
+      const keys = sharePasswordRateLimitKeys(share.token, clientIp);
+      if (
+        !checkRateLimit(keys.token, SHARE_PASSWORD_MAX_ATTEMPTS, SHARE_PASSWORD_WINDOW_MS) ||
+        !checkRateLimit(keys.ip, SHARE_PASSWORD_MAX_ATTEMPTS * 4, SHARE_PASSWORD_WINDOW_MS)
+      ) {
+        return NextResponse.json(
+          { success: false, error: 'Too many attempts. Try again later.' },
+          { status: 429 }
         );
       }
 
@@ -85,12 +121,27 @@ export async function POST(
     html = extractBodyContent(html);
 
     /**
+     * Sanitize before anything else.
+     *
+     * The document body is attacker-controlled (template HTML plus raw
+     * interpolation of document variable values) and this response is served
+     * as `text/html` from the DocMint origin, unsandboxed — a public share
+     * link was a stored-XSS endpoint that ran script in every visitor's
+     * session. The sanitizer must run *before* SVG inlining, because
+     * `replaceSvgDataUris` promotes an inert <img src="data:image/svg+xml"> to
+     * live inline <svg>; the onerror handler below is added afterwards so the
+     * application's own attribute is never stripped.
+     */
+    html = sanitizeHtmlFragment(html);
+
+    /**
      * Convert SVG data URI <img> tags to inline <svg> elements.
      *
      * Chrome/Chromium cannot load SVG data URIs in <img> tags inside
      * sandboxed iframes (sandbox="allow-same-origin"), causing persistent
      * "Error loading svg data:..." console errors. Converting to inline
      * <svg> eliminates the loading step — SVGs render directly in the DOM.
+     * Each inlined payload is independently sanitized by `cleanSvgMarkup`.
      *
      * @see replaceSvgDataUris in lib/utils/image-placeholders.ts
      */
@@ -140,7 +191,18 @@ export async function POST(
     `;
 
     // For now return HTML, in production use PDF generation
-    await DocumentEngine.recordShareDownload(token);
+    //
+    // The counter is claimed atomically inside recordShareDownload, so the
+    // maxDownloads limit is enforced by the database rather than by the
+    // racy read at the top of this handler. If the allowance was consumed by a
+    // concurrent request in the meantime, nothing is served.
+    const recorded = await DocumentEngine.recordShareDownload(token);
+    if (!recorded) {
+      return NextResponse.json(
+        { success: false, error: 'Maximum downloads reached' },
+        { status: 410 }
+      );
+    }
 
     return new NextResponse(styledHtml, {
       headers: {

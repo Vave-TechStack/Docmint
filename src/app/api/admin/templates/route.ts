@@ -1,32 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { requireAdmin } from '@/lib/security/authorization';
+import { parsePagination, enumValue, cleanString } from '@/lib/security/request';
 
 export const dynamic = 'force-dynamic';
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
+const TEMPLATE_VISIBILITIES = ['PUBLIC', 'PRIVATE', 'ORGANIZATION', 'PREMIUM', 'AI'] as const;
 
 export async function GET(request: NextRequest) {
-  try {
-    const session = await auth();
-    if (!session?.user || !ADMIN_ROLES.includes(session.user.role ?? '')) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
 
+  try {
     const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const pageSize = parseInt(searchParams.get('pageSize') || '20');
-    const search = searchParams.get('search') || '';
-    const category = searchParams.get('category') || '';
-    const visibility = searchParams.get('visibility') || '';
-    const mode = searchParams.get('mode') || '';
+    const { page, pageSize, skip, take } = parsePagination(searchParams, 20);
+    const search = cleanString(searchParams.get('search'), 120);
+    const category = cleanString(searchParams.get('category'), 64);
+    const visibility = enumValue(searchParams.get('visibility') ?? '', TEMPLATE_VISIBILITIES);
+    const mode = searchParams.get('mode') ?? '';
 
     const where: Record<string, unknown> = {};
+
+    /**
+     * Tenant scoping: `Template.organizationId` is nullable (platform-seeded
+     * rows), so the scope is "my own org OR platform-owned". Without this a
+     * tenant admin browsed every other tenant's PRIVATE and ORGANIZATION
+     * templates — including their unreleased designs and variable schemas.
+     * A platform super admin still sees everything.
+     */
+    if (!guard.guard.isSuperAdmin || guard.guard.organizationId) {
+      where.OR = [{ organizationId: guard.guard.organizationId }, { organizationId: null }];
+    }
+
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' as const } },
-        { description: { contains: search, mode: 'insensitive' as const } },
+      where.AND = [
+        { OR: where.OR },
+        {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' as const } },
+            { description: { contains: search, mode: 'insensitive' as const } },
+          ],
+        },
       ];
+      delete where.OR;
     }
     if (category) where.documentCategory = category;
     if (visibility) where.visibility = visibility;
@@ -46,8 +62,8 @@ export async function GET(request: NextRequest) {
           organization: { select: { id: true, name: true, slug: true } },
         },
         orderBy: { updatedAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        skip,
+        take,
       }),
       prisma.template.count({ where }),
     ]);

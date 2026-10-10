@@ -26,10 +26,12 @@ vi.mock('@/lib/prisma', () => ({
       findMany: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -54,7 +56,7 @@ vi.mock('@/lib/utils/image-placeholders', () => ({
 // Imports
 // ---------------------------------------------------------------------------
 
-import { wrapStyledHtml, DocumentEngine, sanitizeDocumentHtml } from './document-engine';
+import { wrapStyledHtml, DocumentEngine, sanitizeDocumentHtml, truncateSampleBody } from './document-engine';
 import { prisma } from '@/lib/prisma';
 
 // ---------------------------------------------------------------------------
@@ -224,6 +226,106 @@ describe('DocumentEngine', () => {
         DocumentEngine.update('non-existent', { title: 'Nope' }, 'org-1', 'user-1')
       ).rejects.toThrow('Document not found');
     });
+
+    /**
+     * Regression: the write used to spread the parsed request body straight
+     * into Prisma `data`. `Prisma.DocumentUpdateInput` is a union that includes
+     * `DocumentUncheckedUpdateInput`, which accepts `organizationId` and
+     * `userId`, and the TypeScript annotation is erased at runtime — so any
+     * signed-in user could re-parent their own document into another tenant
+     * with one PATCH. The scoping check only validated the row's CURRENT owner.
+     */
+    describe('ownership column allowlist', () => {
+      beforeEach(() => {
+        (prisma.document.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(mockDocument);
+        (prisma.document.update as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDocument, version: 2 });
+        (prisma.documentVersion.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      });
+
+      const writtenData = () =>
+        (prisma.document.update as ReturnType<typeof vi.fn>).mock.calls[0][0].data as Record<string, unknown>;
+
+      it('does not let a caller re-parent a document into another organization', async () => {
+        await DocumentEngine.update(
+          'doc-1',
+          { title: 'x', organizationId: 'org_VICTIM' } as never,
+          'org-1',
+          'user-1'
+        );
+
+        expect(writtenData().organizationId).toBeUndefined();
+      });
+
+      it('does not let a caller reassign the document to another user', async () => {
+        await DocumentEngine.update(
+          'doc-1',
+          { title: 'x', userId: 'user_VICTIM' } as never,
+          'org-1',
+          'user-1'
+        );
+
+        expect(writtenData().userId).toBeUndefined();
+      });
+
+      it('ignores every ownership and lifecycle column a caller might inject', async () => {
+        await DocumentEngine.update(
+          'doc-1',
+          {
+            title: 'legit',
+            organizationId: 'org_EVIL',
+            userId: 'user_EVIL',
+            id: 'doc-hijacked',
+            createdAt: new Date('1999-01-01'),
+            deletedAt: null,
+            password: 'x',
+            version: 9999,
+            isTemplate: true,
+          } as never,
+          'org-1',
+          'user-1'
+        );
+
+        const data = writtenData();
+        for (const forbidden of [
+          'organizationId',
+          'userId',
+          'id',
+          'createdAt',
+          'deletedAt',
+          'password',
+          'isTemplate',
+        ]) {
+          expect(data[forbidden], forbidden).toBeUndefined();
+        }
+        // Server-controlled fields must still be applied.
+        expect(data.title).toBe('legit');
+        expect(data.version).toBe(mockDocument.version + 1);
+      });
+
+      it('still allows the legitimate editable columns through', async () => {
+        await DocumentEngine.update(
+          'doc-1',
+          {
+            title: 'New title',
+            description: 'desc',
+            htmlContent: '<p>hi</p>',
+            status: 'COMPLETED',
+            isFavorite: true,
+            tags: ['a'],
+          } as never,
+          'org-1',
+          'user-1'
+        );
+
+        const data = writtenData();
+        expect(data.title).toBe('New title');
+        expect(data.description).toBe('desc');
+        expect(data.htmlContent).toBe('<p>hi</p>');
+        expect(data.status).toBe('COMPLETED');
+        expect(data.isFavorite).toBe(true);
+        expect(data.tags).toEqual(['a']);
+      });
+    });
   });
 
   // ─── getById ─────────────────────────────────────────────
@@ -322,7 +424,9 @@ describe('DocumentEngine', () => {
   describe('delete', () => {
     it('should soft delete document and create audit log', async () => {
       (prisma.document.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(mockDocument);
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(async (fn) => fn(prisma));
       (prisma.document.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (prisma.documentShare.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 0 });
       (prisma.auditLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
 
       await DocumentEngine.delete('doc-1', 'org-1', 'user-1');
@@ -345,6 +449,135 @@ describe('DocumentEngine', () => {
       await expect(
         DocumentEngine.delete('non-existent', 'org-1', 'user-1')
       ).rejects.toThrow('Document not found or access denied');
+    });
+  });
+
+  // ─── delete soft-deletes shares ──────────────────────────────
+
+  describe('delete deactivates shares', () => {
+    it('should deactivate active shares in a transaction when soft-deleting a document', async () => {
+      const mockDoc = { ...mockDocument, id: 'doc-1' };
+      (prisma.document.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(mockDoc);
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(async (fn) => fn(prisma));
+      (prisma.document.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (prisma.documentShare.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 2 });
+      (prisma.auditLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+      await DocumentEngine.delete('doc-1', 'org-1', 'user-1');
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.document.update).toHaveBeenCalledWith({
+        where: { id: 'doc-1' },
+        data: { deletedAt: expect.any(Date), status: 'DELETED' },
+      });
+      expect(prisma.documentShare.updateMany).toHaveBeenCalledWith({
+        where: { documentId: 'doc-1', isActive: true },
+        data: { isActive: false },
+      });
+    });
+
+    it('should not deactivate already-inactive shares', async () => {
+      const mockDoc = { ...mockDocument, id: 'doc-2' };
+      (prisma.document.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(mockDoc);
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(async (fn) => fn(prisma));
+      (prisma.document.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (prisma.documentShare.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 0 });
+      (prisma.auditLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+      await DocumentEngine.delete('doc-2', 'org-1', 'user-1');
+
+      // updateMany called with isActive: true filter — zero affected is expected
+      expect(prisma.documentShare.updateMany).toHaveBeenCalledWith({
+        where: { documentId: 'doc-2', isActive: true },
+        data: { isActive: false },
+      });
+    });
+  });
+
+  // ─── getSharedDocument soft-delete defense ──────────────────
+
+  describe('getSharedDocument soft-delete defense', () => {
+    const sharedDoc = { id: 'doc-1', title: 'Shared Doc', deletedAt: null, status: 'DRAFT' };
+    const activeShare = { ...mockShare, document: sharedDoc };
+
+    it('returns document when document is active (no deletedAt, status DRAFT)', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(activeShare);
+
+      const result = await DocumentEngine.getSharedDocument('valid-token');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('denies access when document has deletedAt set', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        document: { ...sharedDoc, deletedAt: new Date(), status: 'DRAFT' },
+      });
+
+      const result = await DocumentEngine.getSharedDocument('valid-token');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Share link not found');
+    });
+
+    it('denies access when document status is DELETED', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        document: { ...sharedDoc, deletedAt: null, status: 'DELETED' },
+      });
+
+      const result = await DocumentEngine.getSharedDocument('valid-token');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Share link not found');
+    });
+
+    it('denies access when document is missing (defensive)', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        document: null,
+      });
+
+      const result = await DocumentEngine.getSharedDocument('valid-token');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Share link not found');
+    });
+
+    it('preserves expired-share behavior (still returns expired error)', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        expiresAt: new Date('2020-01-01'),
+      });
+
+      const result = await DocumentEngine.getSharedDocument('expired-token');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('This share link has expired');
+    });
+
+    it('preserves password-protected share behavior', async () => {
+      const hash = await DocumentEngine.hashSharePassword('secret');
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        password: hash,
+      });
+
+      const result = await DocumentEngine.getSharedDocument('pw-protected', 'secret');
+
+      expect(result.success).toBe(true);
+    });
+
+    it('preserves revoked-share behavior (still returns revoked error)', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...activeShare,
+        isActive: false,
+      });
+
+      const result = await DocumentEngine.getSharedDocument('revoked-token');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('This share link has been revoked');
     });
   });
 
@@ -714,6 +947,56 @@ describe('DocumentEngine', () => {
     });
   });
 
+  // ─── truncateSampleBody ──────────────────────────────────────
+
+  describe('truncateSampleBody', () => {
+    it('leaves a short body untouched', () => {
+      const result = truncateSampleBody('<p>short</p>', 3000);
+      expect(result.truncated).toBe(false);
+      expect(result.html).toBe('<p>short</p>');
+    });
+
+    it('cuts a long body at a top-level element boundary', () => {
+      const body =
+        '<div>one</div><div>two</div><div>three</div><div>four</div><div>five</div>';
+      const result = truncateSampleBody(body, 30);
+      expect(result.truncated).toBe(true);
+      // Whole top-level elements only — no tag sliced in half.
+      expect(result.html).toBe('<div>one</div><div>two</div>');
+      expect(result.html).not.toContain('thr');
+    });
+
+    it('does not disclose the tail of the document', () => {
+      const secret = '<p>CONFIDENTIAL_SALARY_TABLE</p>';
+      const body = '<div>a</div>'.repeat(50) + secret;
+      const result = truncateSampleBody(body, 120);
+      expect(result.html).not.toContain('CONFIDENTIAL_SALARY_TABLE');
+    });
+
+    it('keeps nested markup balanced at the cut point', () => {
+      const body = '<div><table><tr><td>cell</td></tr></table></div>'.repeat(20);
+      const result = truncateSampleBody(body, 60);
+      expect(result.truncated).toBe(true);
+      // Every emitted tag is closed.
+      const open = (result.html.match(/<div>/g) || []).length;
+      const close = (result.html.match(/<\/div>/g) || []).length;
+      expect(open).toBe(close);
+    });
+
+    it('sanitizes before truncating', () => {
+      const body = '<script>alert(1)</script>' + '<div>x</div>'.repeat(200);
+      const result = truncateSampleBody(body, 5000);
+      expect(result.html).not.toContain('alert(1)');
+    });
+
+    it('handles a single element larger than the budget without returning nothing', () => {
+      const body = '<div>' + 'a'.repeat(5000) + '</div>';
+      const result = truncateSampleBody(body, 100);
+      expect(result.truncated).toBe(true);
+      expect(result.html.length).toBeGreaterThan(0);
+    });
+  });
+
   it('generateFromTemplate sanitizes script in template HTML', async () => {
     const template = { htmlTemplate: '<p>{{Name}}</p><script>alert(1)</script>' };
     const result = await DocumentEngine.generateFromTemplate(template, { Name: 'Alice' });
@@ -926,13 +1209,15 @@ describe('DocumentEngine', () => {
   describe('recordShareDownload', () => {
     it('should increment download count', async () => {
       (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(mockShare);
-      (prisma.documentShare.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (prisma.documentShare.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
 
       const result = await DocumentEngine.recordShareDownload('token');
 
       expect(result).toBe(true);
-      expect(prisma.documentShare.update).toHaveBeenCalledWith({
-        where: { id: 'share-1' },
+      // The limit is part of the WHERE clause so the database serialises the
+      // check and the increment — no read-then-write race.
+      expect(prisma.documentShare.updateMany).toHaveBeenCalledWith({
+        where: { id: 'share-1', isActive: true },
         data: { downloadCount: { increment: 1 } },
       });
     });
@@ -943,16 +1228,34 @@ describe('DocumentEngine', () => {
         maxDownloads: 3,
         downloadCount: 2,
       });
-      (prisma.documentShare.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (prisma.documentShare.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
 
       await DocumentEngine.recordShareDownload('token');
 
-      // Called twice: once for increment, once for deactivation
-      expect(prisma.documentShare.update).toHaveBeenCalledTimes(2);
-      expect(prisma.documentShare.update).toHaveBeenLastCalledWith({
-        where: { id: 'share-1' },
+      // The claim is guarded by the remaining allowance...
+      expect(prisma.documentShare.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: 'share-1', isActive: true, downloadCount: { lt: 3 } },
+        data: { downloadCount: { increment: 1 } },
+      });
+      // ...and a second pass deactivates the link once it is used up.
+      expect(prisma.documentShare.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: 'share-1', downloadCount: { gte: 3 }, isActive: true },
         data: { isActive: false },
       });
+    });
+
+    it('should return false when the allowance was consumed concurrently', async () => {
+      (prisma.documentShare.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...mockShare,
+        maxDownloads: 1,
+        downloadCount: 0,
+      });
+      // A parallel request claimed the last download first.
+      (prisma.documentShare.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 0 });
+
+      const result = await DocumentEngine.recordShareDownload('token');
+
+      expect(result).toBe(false);
     });
 
     it('should return false when share not found', async () => {
@@ -961,7 +1264,7 @@ describe('DocumentEngine', () => {
       const result = await DocumentEngine.recordShareDownload('bad-token');
 
       expect(result).toBe(false);
-      expect(prisma.documentShare.update).not.toHaveBeenCalled();
+      expect(prisma.documentShare.updateMany).not.toHaveBeenCalled();
     });
   });
 

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { DocumentEngine } from '@/lib/engine/document-engine';
+import { requireUserScope } from '@/lib/security/authorization';
+import { readJsonBody, assertSameOrigin, isPlainObject } from '@/lib/security/request';
 
 export async function GET(request: NextRequest) {
-  try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
 
+  try {
     const { searchParams } = new URL(request.url);
     const options = {
       status: searchParams.get('status') || undefined,
@@ -24,12 +23,7 @@ export async function GET(request: NextRequest) {
       sortOrder: (searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc',
     };
 
-    const orgId = session.user.organizationId!;
-    const result = await DocumentEngine.list(
-      orgId,
-      session.user.id,
-      options
-    );
+    const result = await DocumentEngine.list(scope.organizationId, scope.userId, options);
 
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
@@ -42,17 +36,37 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const scope = await requireUserScope(request);
+  if (!scope.ok) return scope.response;
+
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    const body = await readJsonBody(request);
+    if (!isPlainObject(body)) {
+      return NextResponse.json({ success: false, error: 'Invalid request body' }, { status: 400 });
     }
 
-    const body = await request.json();
+    /**
+     * `DocumentCreateInput` requires a title and a document type. The old code
+     * passed the raw `request.json()` result straight through, so the compiler
+     * never checked the shape and a body missing `title` reached the engine.
+     * Validate the two required fields here rather than trusting the client.
+     */
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const documentType = typeof body.documentType === 'string' ? body.documentType.trim() : '';
+    if (!title || title.length > 200) {
+      return NextResponse.json({ success: false, error: 'A valid title is required' }, { status: 400 });
+    }
+    if (!documentType || documentType.length > 64) {
+      return NextResponse.json({ success: false, error: 'A valid documentType is required' }, { status: 400 });
+    }
+
     const document = await DocumentEngine.create(
-      body,
-      session.user.organizationId!,
-      session.user.id
+      { ...body, title, documentType } as Parameters<typeof DocumentEngine.create>[0],
+      scope.organizationId,
+      scope.userId
     );
 
     return NextResponse.json({ success: true, data: document });

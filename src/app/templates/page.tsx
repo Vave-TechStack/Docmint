@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { DOCUMENT_CATEGORIES } from '@/lib/utils/constants';
@@ -52,6 +52,7 @@ const VISIBILITY_FILTERS = [
 
 function TemplatesPageContent() {
   const { data: session } = useSession();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -378,7 +379,7 @@ function TemplatesPageContent() {
                   <tr
                     key={template.id}
                     className="hover:bg-blue-50/30 transition-colors cursor-pointer"
-                    onClick={() => window.location.href = `/templates/${template.id}`}
+                    onClick={() => router.push(`/templates/${template.id}`)}
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
