@@ -7,6 +7,25 @@ import { validateImageVariables, validateImageDataUrl } from '@/lib/utils/image-
 import { sanitizeCustomSections, injectCustomSections } from '@/lib/utils/custom-sections';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { prisma } from '@/lib/prisma';
+import { validateFinancials, describeFinancialErrors } from '@/lib/documents/validation';
+
+/**
+ * Placeholder keys a template declares.
+ *
+ * `resolveTemplateWithFallback` can return either a database template
+ * (`variables: TemplateVariable[]`) or a static sample
+ * (`placeholders: string[]`), so both shapes are read.
+ */
+function declaredKeysOf(template: {
+  variables?: Array<{ key?: string }>;
+  placeholders?: string[];
+}): string[] {
+  const fromVariables = Array.isArray(template.variables)
+    ? template.variables.map((v) => v?.key).filter((k): k is string => typeof k === 'string')
+    : [];
+  const fromPlaceholders = Array.isArray(template.placeholders) ? template.placeholders : [];
+  return [...new Set([...fromVariables, ...fromPlaceholders])];
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -121,6 +140,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'Template not found. Please ensure the database is seeded and try again.' },
         { status: 404 }
+      );
+    }
+
+    // Financial integrity gate.
+    //
+    // Runs BEFORE the payment is consumed and before any file is produced, so
+    // a customer is never charged for a document that contradicts itself
+    // (a payslip whose earnings do not add up to its gross, an invoice whose
+    // words disagree with its total). Only objective arithmetic identities
+    // declared by the template itself are enforced — no statutory rates are
+    // guessed. See src/lib/documents/validation.ts.
+    const financial = validateFinancials({
+      values: (variables ?? {}) as Record<string, unknown>,
+      declaredKeys: declaredKeysOf(template),
+    });
+    if (!financial.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: describeFinancialErrors(financial.errors),
+          financialErrors: financial.errors,
+        },
+        { status: 400 }
       );
     }
 

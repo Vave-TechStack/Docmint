@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { TemplateEngine } from '@/lib/engine/template-engine';
 import { DocumentEngine } from '@/lib/engine/document-engine';
 import { validateImageVariables } from '@/lib/utils/image-upload';
+import { validateFinancials, describeFinancialErrors } from '@/lib/documents/validation';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 // Prevent static rendering - this route needs to call the database
@@ -56,6 +57,23 @@ export async function POST(request: NextRequest) {
           error: 'Premium templates require a DocMint Premium subscription. Get this template from the Template Library.',
         },
         { status: 403 }
+      );
+    }
+
+    // Financial integrity gate, mirroring /api/instant/download so the user is
+    // told about contradictory figures while filling the form rather than
+    // after paying for a file.
+    const financial = validateFinancials({
+      values: (variables ?? {}) as Record<string, unknown>,
+    });
+    if (!financial.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: describeFinancialErrors(financial.errors),
+          financialErrors: financial.errors,
+        },
+        { status: 400 }
       );
     }
 

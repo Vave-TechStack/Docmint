@@ -8,6 +8,7 @@ import { generateSampleVariables } from '@/lib/data/sample-data';
 import { resolveTemplateWithFallback } from '@/lib/data/sample-templates';
 import { hasActivePremiumSubscription } from '@/lib/subscription';
 import { validateImageVariables, validateImageDataUrl } from '@/lib/utils/image-upload';
+import { validateFinancials, describeFinancialErrors } from '@/lib/documents/validation';
 import { sanitizeCustomSections, injectCustomSections } from '@/lib/utils/custom-sections';
 
 export async function POST(
@@ -114,6 +115,29 @@ export async function POST(
     const resolvedVariables = isSample
       ? generateSampleVariables((template.variables || []).map((v: { key: string }) => v.key))
       : variables;
+
+    // Financial integrity gate. Auto-generated sample data is exempt: it is
+    // illustrative filler, not a customer's declared figures. A real
+    // submission that contradicts itself (earnings that do not sum to the
+    // stated gross, words that disagree with the total) is refused before
+    // any file is produced. See src/lib/documents/validation.ts.
+    if (!isSample) {
+      const declaredKeys = (template.variables || []).map((v: { key: string }) => v.key);
+      const financial = validateFinancials({
+        values: (resolvedVariables ?? {}) as Record<string, unknown>,
+        declaredKeys,
+      });
+      if (!financial.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: describeFinancialErrors(financial.errors),
+            financialErrors: financial.errors,
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     // Generate document HTML from template + variables
     const html = await DocumentEngine.generateFromTemplate(template, resolvedVariables);
