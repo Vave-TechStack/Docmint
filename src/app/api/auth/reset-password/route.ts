@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { invalidateUserCache } from '@/lib/security/authorization';
 import { resolveVerificationToken, consumeVerificationToken } from '@/lib/security/token-lookup';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,11 +29,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (password.length < 8) {
+    if (typeof body?.password !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Password must be at least 8 characters' },
+        { success: false, error: 'A valid password is required' },
         { status: 400 }
       );
+    }
+    const passwordError = passwordValidationError(password);
+    if (passwordError) {
+      return NextResponse.json({ success: false, error: passwordError }, { status: 400 });
     }
 
     // Indexed lookup with a bounded fallback for legacy rows. See

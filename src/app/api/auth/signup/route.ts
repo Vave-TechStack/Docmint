@@ -7,6 +7,7 @@ import { EMAIL_VERIFICATION_TOKEN_TTL_MS } from '@/lib/utils/constants';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { hashToken } from '@/lib/security/crypto';
 import { safeTokenIndex } from '@/lib/security/token-lookup';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 export async function POST(request: Request) {
   try {
@@ -30,6 +31,17 @@ export async function POST(request: Request) {
         { success: false, error: 'Missing required fields' },
         { status: 400 }
       );
+    }
+
+    if (typeof password !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'A valid password is required' },
+        { status: 400 }
+      );
+    }
+    const passwordError = passwordValidationError(password);
+    if (passwordError) {
+      return NextResponse.json({ success: false, error: passwordError }, { status: 400 });
     }
 
     if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

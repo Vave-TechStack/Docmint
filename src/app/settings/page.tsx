@@ -16,6 +16,7 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -102,8 +103,9 @@ export default function SettingsPage() {
       toast.error('Passwords do not match');
       return;
     }
-    if (password.newPass.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    const passwordError = passwordValidationError(password.newPass);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
 

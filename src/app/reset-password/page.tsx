@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Loader2, Lock, CheckCircle2, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 function ResetPasswordContent() {
   const searchParams = useSearchParams();
@@ -27,8 +28,9 @@ function ResetPasswordContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    const passwordError = passwordValidationError(password);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
     if (password !== confirm) {

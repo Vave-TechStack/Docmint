@@ -6,13 +6,11 @@ import { invalidateUserCache } from '@/lib/security/authorization';
 import { assertSameOrigin, readJsonBody, isPlainObject, cleanString } from '@/lib/security/request';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { logAuthEvent, SecurityEventAction, createSecurityContext } from '@/lib/security/logger';
+import { exceedsBcryptPasswordLimit, passwordValidationError } from '@/lib/auth/password-policy';
 
 export const dynamic = 'force-dynamic';
 
 const BCRYPT_COST = 12;
-const MIN_PASSWORD_LENGTH = 8;
-const MAX_PASSWORD_LENGTH = 200;
-
 /**
  * POST /api/account/password  { currentPassword, newPassword }
  *
@@ -65,17 +63,16 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    if (exceedsBcryptPasswordLimit(currentPassword)) {
       return NextResponse.json(
-        { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` },
+        { success: false, error: 'Current password exceeds the supported limit. Reset your password to continue.' },
         { status: 400 }
       );
     }
-    if (newPassword.length > MAX_PASSWORD_LENGTH) {
-      // bcrypt silently truncates beyond 72 bytes; refuse rather than accept a
-      // password whose tail is ignored.
+    const passwordError = passwordValidationError(newPassword);
+    if (passwordError) {
       return NextResponse.json(
-        { success: false, error: 'Password is too long' },
+        { success: false, error: passwordError },
         { status: 400 }
       );
     }

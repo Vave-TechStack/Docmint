@@ -29,7 +29,7 @@ const { prismaMocks } = vi.hoisted(() => ({
       findMany: vi.fn(), 
       findUnique: vi.fn(), 
       delete: vi.fn(),
-      deleteMany: vi.fn() 
+      deleteMany: vi.fn()
     },
     user: { 
       updateMany: vi.fn(),
@@ -79,6 +79,25 @@ describe('POST /api/auth/reset-password', () => {
 
     const short = await post({ token: VALID_TOKEN, password: 'short' });
     expect(short.status).toBe(400);
+    expect(prismaMocks.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly 72 UTF-8 bytes and rejects longer ASCII and Unicode passwords', async () => {
+    mockBcryptCompare.mockResolvedValue(true);
+    prismaMocks.verificationToken.findMany.mockResolvedValue([
+      { identifier: 'user@example.com', token: VALID_TOKEN, expires: new Date(Date.now() + 60_000) },
+    ]);
+    prismaMocks.user.findFirst.mockResolvedValue({ id: 'user-1' });
+
+    const exactLimit = await post({ token: VALID_TOKEN, password: 'a'.repeat(72) });
+    expect(exactLimit.status).toBe(200);
+
+    prismaMocks.user.updateMany.mockClear();
+    const overAscii = await post({ token: VALID_TOKEN, password: 'a'.repeat(73) });
+    const overUnicode = await post({ token: VALID_TOKEN, password: '😀'.repeat(19) });
+    expect(overAscii.status).toBe(400);
+    expect(overUnicode.status).toBe(400);
+    expect((await overUnicode.json()).error).toMatch(/72 UTF-8 bytes/);
     expect(prismaMocks.user.updateMany).not.toHaveBeenCalled();
   });
 

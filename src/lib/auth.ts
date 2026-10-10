@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logAuthEvent, SecurityEventAction, logSystemEvent } from '@/lib/security/logger';
+import { exceedsBcryptPasswordLimit } from '@/lib/auth/password-policy';
 
 /**
  * Mask an email for logging: us***@domain.com
@@ -98,6 +99,16 @@ export async function authorizeCallback(credentials: any): Promise<any> {
 
   const email = (credentials.email as string).trim().toLowerCase();
   const password = credentials.password as string;
+
+  if (typeof password !== 'string' || exceedsBcryptPasswordLimit(password)) {
+    await logAuthEvent(
+      SecurityEventAction.LOGIN_FAILURE,
+      false,
+      'Credential password exceeds the supported bcrypt input limit',
+      { email, metadata: { reason: 'password_too_long' } }
+    );
+    return null;
+  }
 
   // Brute-force guard: at most 10 failed-or-successful attempts per minute
   // per email, across all IPs (the authorize callback has no request/IP).
@@ -446,5 +457,4 @@ declare module 'next-auth' {
     } & DefaultSession['user'];
   }
 }
-
 

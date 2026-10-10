@@ -548,6 +548,26 @@ describe('authorizeCallback', () => {
     resetRateLimitsForTests();
   });
 
+  it('rejects passwords over the bcrypt byte limit before looking up the account', async () => {
+    const result = await authorizeCallback({
+      email: 'test@example.com',
+      password: '😀'.repeat(19),
+    });
+    expect(result).toBeNull();
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(mockBcryptCompare).not.toHaveBeenCalled();
+  });
+
+  it('allows exactly 72 UTF-8 bytes to reach bcrypt comparison', async () => {
+    (prisma.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const result = await authorizeCallback({
+      email: 'test@example.com',
+      password: 'a'.repeat(72),
+    });
+    expect(result).toBeNull();
+    expect(prisma.user.findUnique).toHaveBeenCalled();
+  });
+
   it('should return null when email is missing', async () => {
     const result = await authorizeCallback({ password: 'pass123' });
 

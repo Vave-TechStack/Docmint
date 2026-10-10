@@ -120,6 +120,31 @@ describe('POST /api/account — password change', () => {
     expect(prismaMocks.user.update).not.toHaveBeenCalled();
   });
 
+  it('accepts a password at the 72-byte bcrypt boundary', async () => {
+    const res = await post({ currentPassword: 'old-pass-1', newPassword: 'a'.repeat(72) });
+    expect(res.status).toBe(200);
+    expect(mockBcryptHash).toHaveBeenCalledWith('a'.repeat(72), 12);
+  });
+
+  it('rejects passwords over 72 UTF-8 bytes, including multibyte input', async () => {
+    const ascii = await post({ currentPassword: 'old-pass-1', newPassword: 'a'.repeat(73) });
+    const unicode = await post({ currentPassword: 'old-pass-1', newPassword: '😀'.repeat(19) });
+    expect(ascii.status).toBe(400);
+    expect(unicode.status).toBe(400);
+    expect((await unicode.json()).error).toMatch(/72 UTF-8 bytes/);
+    expect(prismaMocks.user.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an over-limit current password instead of comparing its truncated prefix', async () => {
+    const res = await post({
+      currentPassword: '😀'.repeat(19),
+      newPassword: 'new-password-123',
+    });
+    expect(res.status).toBe(400);
+    expect(mockBcryptCompare).not.toHaveBeenCalled();
+    expect(prismaMocks.user.update).not.toHaveBeenCalled();
+  });
+
   it('rejects a new password identical to the current one', async () => {
     const res = await post({ currentPassword: 'same-pass-1', newPassword: 'same-pass-1' });
     expect(res.status).toBe(400);
