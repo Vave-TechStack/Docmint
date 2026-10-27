@@ -1,7 +1,37 @@
+import { escapeHtml, escapeHtmlWithBreaks, stripNewlines, headerSafe } from '@/lib/security/request';
+/**
+ * Constrain a value used as an `href` to an absolute http(s) URL.
+ *
+ * Interpolating a caller-supplied string into `href="..."` without this check
+ * permits `javascript:` and `data:` URIs — a live script-execution vector in
+ * the recipient's mail client even when the surrounding HTML is escaped.
+ * Anything that is not a parseable absolute http/https URL collapses to `#`.
+ */
+function safeHttpUrl(value: string): string {
+  try {
+    const parsed = new URL(String(value ?? ''));
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? escapeHtml(parsed.toString()) : '#';
+  } catch {
+    return '#';
+  }
+}
+
 /**
  * DocMint Email Service
  * Handles transactional emails for auth, notifications, and document sharing.
  */
+/**
+ * Public origin used to build links inside transactional email.
+ *
+ * Without a fallback, an unset `NEXT_PUBLIC_APP_URL` produced
+ * `undefined/verify-email?token=…`, so the one link the entire signup journey
+ * depends on was unusable. Every other site URL in the codebase already falls
+ * back to localhost; these two did not.
+ */
+function publicAppUrl(): string {
+  return (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+}
+
 export class EmailService {
   private static apiKey = process.env.RESEND_API_KEY;
   private static fromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@docmint.com';
@@ -49,7 +79,7 @@ export class EmailService {
    * Send verification email
    */
   static async sendVerificationEmail(email: string, token: string): Promise<boolean> {
-    const verificationUrl = `${process.env.NEXT_PUBLIC_APP_URL}/verify-email?token=${token}`;
+    const verificationUrl = `${publicAppUrl()}/verify-email?token=${token}`;
 
     return this.send({
       to: email,
@@ -105,7 +135,7 @@ export class EmailService {
           <h1 style="color: #2563EB;">Welcome, ${name}! 🎉</h1>
           <p>Your DocMint account is ready. Start creating professional documents.</p>
           <div style="margin: 30px 0;">
-            <a href="${process.env.NEXT_PUBLIC_APP_URL}/dashboard" 
+            <a href="${publicAppUrl()}/dashboard"
                style="display: inline-block; padding: 12px 24px; background-color: #2563EB; color: white; 
                       text-decoration: none; border-radius: 6px;">
               Go to Dashboard
@@ -136,7 +166,7 @@ export class EmailService {
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2563EB;">Reset Your Password</h2>
           <p>Click the button below to reset your password.</p>
-          <a href="${resetUrl}" 
+          <a href="${safeHttpUrl(resetUrl)}" 
              style="display: inline-block; padding: 12px 24px; background-color: #2563EB; color: white; 
                     text-decoration: none; border-radius: 6px; margin: 20px 0;">
             Reset Password
@@ -157,14 +187,25 @@ export class EmailService {
     shareLink: string,
     senderName: string
   ): Promise<boolean> {
+    /**
+     * `senderName` and `documentName` are chosen by the user (display name and
+     * document title) and were interpolated raw into the HTML body and the
+     * subject, so markup in either executed in the recipient's mail client.
+     */
+    const sender = escapeHtml(headerSafe(senderName, 100));
+    const docTitle = escapeHtml(String(documentName ?? '').slice(0, 200));
+    // Only an absolute http(s) URL may reach the href; a `javascript:` URI
+    // here would otherwise be a live script-injection vector.
+    const link = safeHttpUrl(shareLink);
+
     return this.send({
       to: recipientEmail,
-      subject: `${senderName} shared a document with you - DocMint`,
+      subject: headerSafe(`${senderName} shared a document with you - DocMint`, 200),
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2563EB;">Document Shared</h2>
-          <p>${senderName} shared the document "${documentName}" with you.</p>
-          <a href="${shareLink}" 
+          <p>${sender} shared the document "${docTitle}" with you.</p>
+          <a href="${link}" 
              style="display: inline-block; padding: 12px 24px; background-color: #2563EB; color: white; 
                     text-decoration: none; border-radius: 6px; margin: 20px 0;">
             View Document
@@ -240,9 +281,31 @@ export class EmailService {
     message: string;
   }): Promise<boolean> {
     const supportEmail = process.env.SUPPORT_EMAIL || 'support@docmint.com';
+
+    /**
+     * Every one of these fields is fully attacker-controlled and was previously
+     * interpolated raw into BOTH the HTML body and the message subject:
+     *
+     * - HTML body: `<img src=x onerror=...>` in the name/subject/message
+     *   executed in the support inbox's mail client, and a
+     *   `javascript:` / `data:` URI in the `mailto:` href below was a second
+     *   injection point.
+     * - Subject: embedded CR/LF can be used to inject extra headers when a
+     *   downstream provider folds the value into an SMTP conversation
+     *   (header-injection / mail-relay abuse).
+     *
+     * Escaping happens here — at the sink — rather than in the route, so every
+     * future caller is covered by construction.
+     */
+    const name = escapeHtml(headerSafe(data.name, 100));
+    const email = escapeHtml(headerSafe(data.email, 200));
+    const subjectEscaped = escapeHtml(headerSafe(data.subject, 200));
+    const messageEscaped = escapeHtmlWithBreaks(data.message);
+
+    // The visible subject is built only from sanitised, length-capped text.
     const subject = data.subject
-      ? `[Contact Form] ${data.subject} - from ${data.name}`
-      : `[Contact Form] New enquiry from ${data.name}`;
+      ? `[Contact Form] ${headerSafe(data.subject, 100)} - from ${headerSafe(data.name, 60)}`
+      : `[Contact Form] New enquiry from ${headerSafe(data.name, 60)}`;
 
     return this.send({
       to: supportEmail,
@@ -254,18 +317,18 @@ export class EmailService {
             <table style="width: 100%; border-collapse: collapse;">
               <tr>
                 <td style="padding: 8px 12px; color: #6B7280; font-weight: 600; width: 100px;">Name:</td>
-                <td style="padding: 8px 12px;">${data.name}</td>
+                <td style="padding: 8px 12px;">${name}</td>
               </tr>
               <tr>
                 <td style="padding: 8px 12px; color: #6B7280; font-weight: 600;">Email:</td>
                 <td style="padding: 8px 12px;">
-                  <a href="mailto:${data.email}" style="color: #2563EB;">${data.email}</a>
+                  <a href="mailto:${email}" style="color: #2563EB;">${email}</a>
                 </td>
               </tr>
               ${data.subject ? `
               <tr>
                 <td style="padding: 8px 12px; color: #6B7280; font-weight: 600;">Subject:</td>
-                <td style="padding: 8px 12px;">${data.subject}</td>
+                <td style="padding: 8px 12px;">${subjectEscaped}</td>
               </tr>` : ''}
               <tr>
                 <td style="padding: 8px 12px; color: #6B7280; font-weight: 600;">Date:</td>
@@ -275,20 +338,20 @@ export class EmailService {
           </div>
           <h3 style="color: #374151;">Message:</h3>
           <div style="background: white; border: 1px solid #E5E7EB; padding: 16px; border-radius: 8px; margin: 10px 0; white-space: pre-wrap;">
-            ${data.message}
+            ${messageEscaped}
           </div>
           <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 24px 0;" />
           <p style="color: #6B7280; font-size: 14px;">
             Reply to this enquiry by writing back to 
-            <a href="mailto:${data.email}" style="color: #2563EB;">${data.email}</a>
+            <a href="mailto:${email}" style="color: #2563EB;">${email}</a>
           </p>
         </div>
       `,
       text: `Contact Form Enquiry
 
-Name: ${data.name}
-Email: ${data.email}
-Subject: ${data.subject || 'N/A'}
+Name: ${stripNewlines(data.name)}
+Email: ${stripNewlines(data.email)}
+Subject: ${stripNewlines(data.subject) || 'N/A'}
 Date: ${new Date().toISOString()}
 
 Message:

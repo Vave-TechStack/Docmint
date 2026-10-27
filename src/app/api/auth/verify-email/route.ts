@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { invalidateUserCache } from '@/lib/security/authorization';
+import { resolveVerificationToken, consumeVerificationToken } from '@/lib/security/token-lookup';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * GET /api/auth/verify-email?token=...
- *
- * Verifies the email address on the account that owns the token. Tokens are
- * single-use and expire after 24 hours (see EMAIL_VERIFICATION_TOKEN_TTL_MS).
- */
 export async function GET(request: NextRequest) {
   try {
+    // Applied before the database and bcrypt work, keyed by IP. Without it the
+    // lookup below is an unauthenticated DoS amplifier.
+    if (!checkRateLimit(`verify-email:${getClientIp(request)}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many attempts. Please wait a minute.' },
+        { status: 429 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const token = searchParams.get('token') || '';
 
@@ -31,24 +37,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const record = await prisma.verificationToken.findUnique({ where: { token } });
-    if (!record) {
+    // Indexed lookup with a bounded fallback for legacy rows. See
+    // src/lib/security/token-lookup.ts.
+    const matched = await resolveVerificationToken(token, { purpose: 'verify' });
+    if (!matched) {
       return NextResponse.json(
         { success: false, error: 'Invalid or already-used verification link' },
         { status: 400 }
       );
     }
 
-    if (record.expires < new Date()) {
-      return NextResponse.json(
-        { success: false, error: 'Verification link has expired' },
-        { status: 410 }
-      );
-    }
-
     // Mark the owning account's email as verified (token identifier = email).
     const updated = await prisma.user.updateMany({
-      where: { email: record.identifier, deletedAt: null },
+      where: { email: matched.identifier, deletedAt: null },
       data: { emailVerified: new Date() },
     });
 
@@ -60,7 +61,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Tokens are single-use.
-    await prisma.verificationToken.delete({ where: { token } }).catch(() => {});
+    await consumeVerificationToken(matched.tokenHash);
+
+    // Invalidate revalidation cache so the verified email status takes effect immediately
+    const updatedUser = await prisma.user.findFirst({ where: { email: matched.identifier, deletedAt: null }, select: { id: true } });
+    if (updatedUser) {
+      invalidateUserCache(updatedUser.id);
+    }
 
     return NextResponse.json({
       success: true,

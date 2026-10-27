@@ -7,8 +7,28 @@ import { validateImageVariables, validateImageDataUrl } from '@/lib/utils/image-
 import { sanitizeCustomSections, injectCustomSections } from '@/lib/utils/custom-sections';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { prisma } from '@/lib/prisma';
+import { validateFinancials, describeFinancialErrors } from '@/lib/documents/validation';
+
+/**
+ * Placeholder keys a template declares.
+ *
+ * `resolveTemplateWithFallback` can return either a database template
+ * (`variables: TemplateVariable[]`) or a static sample
+ * (`placeholders: string[]`), so both shapes are read.
+ */
+function declaredKeysOf(template: {
+  variables?: Array<{ key?: string }>;
+  placeholders?: string[];
+}): string[] {
+  const fromVariables = Array.isArray(template.variables)
+    ? template.variables.map((v) => v?.key).filter((k): k is string => typeof k === 'string')
+    : [];
+  const fromPlaceholders = Array.isArray(template.placeholders) ? template.placeholders : [];
+  return [...new Set([...fromVariables, ...fromPlaceholders])];
+}
 
 export async function POST(request: NextRequest) {
+  let paymentClaimed = false;
   try {
     // Abuse guard: paid downloads are heavy to generate.
     const ip = getClientIp(request);
@@ -20,9 +40,21 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { templateId, variables, format, paymentId, orderId, signature } = body;
+    const { templateId, variables, format, paymentId, orderId, signature } = body ?? {};
 
-    if (!templateId || !variables || !format || !paymentId || !orderId || !signature) {
+    if (
+      typeof templateId !== 'string' ||
+      typeof variables !== 'object' ||
+      variables === null ||
+      Array.isArray(variables) ||
+      (format !== 'pdf' && format !== 'docx') ||
+      typeof paymentId !== 'string' ||
+      !paymentId ||
+      typeof orderId !== 'string' ||
+      !orderId ||
+      typeof signature !== 'string' ||
+      !signature
+    ) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
@@ -48,6 +80,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Resolve and validate deterministic rejection cases before claiming the
+    // payment, so users can correct input and retry without paying again.
+    const template = await resolveTemplateWithFallback(templateId);
+    if (!template || !template.htmlTemplate) {
+      return NextResponse.json(
+        { success: false, error: 'Template not found. Please ensure the database is seeded and try again.' },
+        { status: 404 }
+      );
+    }
+
+    const financial = validateFinancials({
+      values: variables as Record<string, unknown>,
+      declaredKeys: declaredKeysOf(template),
+    });
+    if (!financial.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: describeFinancialErrors(financial.errors),
+          financialErrors: financial.errors,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (template.isPremium) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Premium templates require a DocMint Premium subscription. Get this template from the Template Library.',
+        },
+        { status: 403 }
+      );
+    }
+
     // Verify payment end-to-end against the Razorpay API: signature + the
     // payment must belong to this order, be captured (money moved), and be
     // exactly the ₹9 instant price. The bare HMAC only proves a payment ID
@@ -60,17 +127,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // One-time consume: mark this payment used atomically so a single ₹9
+    // One-time claim: mark this payment used atomically so a single ₹9
     // payment cannot be replayed for unlimited downloads. If the Razorpay
     // order.paid webhook hasn't recorded the payment yet (slow webhook vs.
     // the client's own success callback), record it here in the same step.
-    const consumed = await prisma.payment.updateMany({
+    // This claim is permanent; failures after it require support rather than
+    // making the same payment reusable.
+    let consumed = await prisma.payment.updateMany({
       where: { razorpayPaymentId: paymentId, usedAt: null },
       data: { usedAt: new Date() },
     });
+
     if (consumed.count === 0) {
-      const existing = await prisma.payment.findUnique({
-        where: { razorpayPaymentId: paymentId },
+      // The order.paid webhook may have landed first and recorded the payment
+      // by order id with a null razorpayPaymentId. Claim that row instead of
+      // creating a second one — otherwise the unique razorpayOrderId index
+      // makes the create below fail and blocks a customer who has paid.
+      consumed = await prisma.payment.updateMany({
+        where: { razorpayOrderId: orderId, razorpayPaymentId: null, usedAt: null },
+        data: { razorpayPaymentId: paymentId, usedAt: new Date() },
+      });
+    }
+
+    if (consumed.count === 0) {
+      const existing = await prisma.payment.findFirst({
+        where: { OR: [{ razorpayPaymentId: paymentId }, { razorpayOrderId: orderId }] },
+        select: { usedAt: true },
       });
       if (existing?.usedAt) {
         return NextResponse.json(
@@ -91,37 +173,36 @@ export async function POST(request: NextRequest) {
             usedAt: new Date(),
           },
         });
-      } catch {
-        // Lost a race with another request consuming the same payment.
-        return NextResponse.json(
-          { success: false, error: 'This payment has already been used for a download' },
-          { status: 409 }
-        );
+      } catch (error) {
+        if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
+          // Lost a race with another request claiming the same payment/order.
+          return NextResponse.json(
+            { success: false, error: 'This payment has already been used for a download' },
+            { status: 409 }
+          );
+        }
+        throw error;
       }
     }
 
-    // Fetch template — DB first, static sample fallback (the /instant page
-    // itself falls back to sample templates when the DB is empty, so the paid
-    // download MUST resolve the same template or paying users get a 404).
-    const template = await resolveTemplateWithFallback(templateId);
-    if (!template || !template.htmlTemplate) {
-      return NextResponse.json(
-        { success: false, error: 'Template not found. Please ensure the database is seeded and try again.' },
-        { status: 404 }
-      );
-    }
+    paymentClaimed = true;
+
+    // The validated template is now ready for rendering.
+
+
+    // Financial integrity gate.
+    //
+    // Runs BEFORE the payment is consumed and before any file is produced, so
+    // a customer is never charged for a document that contradicts itself
+    // (a payslip whose earnings do not add up to its gross, an invoice whose
+    // words disagree with its total). Only objective arithmetic identities
+    // declared by the template itself are enforced — no statutory rates are
+    // guessed. See src/lib/documents/validation.ts.
+
 
     // Premium templates are sold through the Template Library behind the
     // Premium subscription — block the ₹9 instant flow so it can't bypass.
-    if (template.isPremium) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Premium templates require a DocMint Premium subscription. Get this template from the Template Library.',
-        },
-        { status: 403 }
-      );
-    }
+
 
     // Generate document HTML
     const html = await DocumentEngine.generateFromTemplate(template, variables);
@@ -161,7 +242,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Download generation error:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to generate document' },
+      {
+        success: false,
+        error: paymentClaimed
+          ? 'Payment was reserved but document delivery failed. Please contact support; do not retry this payment.'
+          : 'Failed to generate document',
+      },
       { status: 500 }
     );
   }

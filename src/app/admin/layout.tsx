@@ -24,16 +24,16 @@ import {
 import { cn } from '@/lib/utils/cn';
 
 const sidebarLinks = [
-  { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
-  { label: 'Revenue', href: '/admin/revenue', icon: DollarSign },
-  { label: 'Users', href: '/admin/users', icon: Users },
-  { label: 'Templates', href: '/admin/templates', icon: LayoutTemplate },
-  { label: 'Subscriptions', href: '/admin/subscriptions', icon: Crown },
-  { label: 'Support Tickets', href: '/admin/tickets', icon: Ticket },
-  { label: 'Blog / CMS', href: '/admin/blog', icon: FileText },
-  { label: 'Audit Logs', href: '/admin/audit-logs', icon: ClipboardList },
-  { label: 'Coupons', href: '/admin/coupons', icon: Percent },
-  { label: 'Settings', href: '/admin/settings', icon: Settings },
+  { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard, superAdminOnly: false },
+  { label: 'Revenue', href: '/admin/revenue', icon: DollarSign, superAdminOnly: false },
+  { label: 'Users', href: '/admin/users', icon: Users, superAdminOnly: false },
+  { label: 'Templates', href: '/admin/templates', icon: LayoutTemplate, superAdminOnly: false },
+  { label: 'Subscriptions', href: '/admin/subscriptions', icon: Crown, superAdminOnly: false },
+  { label: 'Support Tickets', href: '/admin/tickets', icon: Ticket, superAdminOnly: false },
+  { label: 'Blog / CMS', href: '/admin/blog', icon: FileText, superAdminOnly: true },
+  { label: 'Audit Logs', href: '/admin/audit-logs', icon: ClipboardList, superAdminOnly: false },
+  { label: 'Coupons', href: '/admin/coupons', icon: Percent, superAdminOnly: false },
+  { label: 'Settings', href: '/admin/settings', icon: Settings, superAdminOnly: true },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -53,6 +53,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       }
     }
   }, [status, session, router]);
+
+  /**
+   * Platform-only destinations are hidden from tenant admins. The API already
+   * rejects them with 403, but leaving the links visible just produced a dead
+   * "Unauthorized" screen — and the nav itself disclosed which platform
+   * controls exist. This is presentation only; the server is the authority.
+   */
+  const isSuperAdmin = session?.user?.role === 'SUPER_ADMIN';
+  const visibleLinks = sidebarLinks.filter((link) => !link.superAdminOnly || isSuperAdmin);
+
+  useEffect(() => {
+    if (status === 'authenticated' && !isSuperAdmin) {
+      const blocked = sidebarLinks.filter((l) => l.superAdminOnly).map((l) => l.href);
+      if (blocked.some((href) => pathname.startsWith(href))) {
+        router.replace('/admin/dashboard');
+      }
+    }
+  }, [status, isSuperAdmin, pathname, router]);
 
   if (status === 'loading') {
     return (
@@ -110,7 +128,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {sidebarLinks.map((link) => {
+          {visibleLinks.map((link) => {
             const isActive = pathname.startsWith(link.href);
             return (
               <Link

@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { resolveOptionalScope } from '@/lib/security/authorization';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
 import { TemplateEngine } from '@/lib/engine/template-engine';
-import { DocumentEngine, wrapStyledHtml, extractBodyContent, applySampleWatermark } from '@/lib/engine/document-engine';
+import { DocumentEngine, wrapStyledHtml, extractBodyContent, applySampleWatermark, truncateSampleBody } from '@/lib/engine/document-engine';
 import { DOCXGenerator } from '@/lib/docx/docx-generator';
 import { generateSampleVariables } from '@/lib/data/sample-data';
 import { resolveTemplateWithFallback } from '@/lib/data/sample-templates';
 import { hasActivePremiumSubscription } from '@/lib/subscription';
 import { validateImageVariables, validateImageDataUrl } from '@/lib/utils/image-upload';
+import { validateFinancials, describeFinancialErrors } from '@/lib/documents/validation';
 import { sanitizeCustomSections, injectCustomSections } from '@/lib/utils/custom-sections';
 
 export async function POST(
@@ -15,8 +17,22 @@ export async function POST(
 ) {
   const { id } = await context.params;
   try {
-    // Authenticate user (optional - allow both logged-in and public template downloads)
-    const session = await auth();
+    // Server-side DOCX/PDF rendering is expensive, and this route is reachable
+    // anonymously. Its sibling render paths are already throttled
+    // (/api/instant/download and /api/instant/sample, 10/min) — this one was
+    // missed, which made it an anonymous render-amplification endpoint.
+    if (!checkRateLimit(`template-download:${getClientIp(request)}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many download requests. Please wait a minute.' },
+        { status: 429 }
+      );
+    }
+
+    // Optional authentication, but REVALIDATED against the database.
+    // Reading `session.user.role` / `session.user.organizationId` straight off
+    // the token let a demoted admin keep the paywall bypass and a transferred
+    // user keep their old tenant for the 30-day default token lifetime.
+    const scope = await resolveOptionalScope(request, { requireOrganization: true });
     const body = await request.json();
     const { variables, format } = body;
 
@@ -58,7 +74,7 @@ export async function POST(
     // resolve the same template or they 404 after the fact).
     const template = await resolveTemplateWithFallback(
       id,
-      session?.user?.organizationId || null
+      scope?.organizationId ?? null
     );
     if (!template || !template.htmlTemplate) {
       return NextResponse.json(
@@ -74,15 +90,15 @@ export async function POST(
     // require an active Premium subscription. Admins bypass (they manage them).
     if (template.isPremium && !isSample) {
       const isAdmin =
-        session?.user?.role === 'SUPER_ADMIN' || session?.user?.role === 'ADMIN';
+        scope?.guard.isAdmin === true;
       if (!isAdmin) {
-        if (!session?.user?.organizationId) {
+        if (!scope?.organizationId) {
           return NextResponse.json(
             { success: false, error: 'Please sign in to download premium templates.' },
             { status: 401 }
           );
         }
-        const unlocked = await hasActivePremiumSubscription(session.user.organizationId);
+        const unlocked = await hasActivePremiumSubscription(scope.organizationId);
         if (!unlocked) {
           return NextResponse.json(
             {
@@ -100,19 +116,60 @@ export async function POST(
       ? generateSampleVariables((template.variables || []).map((v: { key: string }) => v.key))
       : variables;
 
+    // Financial integrity gate. Auto-generated sample data is exempt: it is
+    // illustrative filler, not a customer's declared figures. A real
+    // submission that contradicts itself (earnings that do not sum to the
+    // stated gross, words that disagree with the total) is refused before
+    // any file is produced. See src/lib/documents/validation.ts.
+    if (!isSample) {
+      const declaredKeys = (template.variables || []).map((v: { key: string }) => v.key);
+      const financial = validateFinancials({
+        values: (resolvedVariables ?? {}) as Record<string, unknown>,
+        declaredKeys,
+      });
+      if (!financial.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: describeFinancialErrors(financial.errors),
+            financialErrors: financial.errors,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     // Generate document HTML from template + variables
     const html = await DocumentEngine.generateFromTemplate(template, resolvedVariables);
 
     // Track usage
     await TemplateEngine.trackUsage(id).catch(() => {});
 
-    // Watermark premium samples so the free demo can't double as the paid file
+    // Build the sample body.
+    //
+    // A premium sample must NOT contain the whole template. The watermark is
+    // just a <div> in the output, so returning the complete premium document
+    // behind a watermark leaked the paid product: one `remove()` call and the
+    // buyer has the file. Premium samples are therefore TRUNCATED first, then
+    // watermarked, and the truncation notice makes the cut explicit.
     const bodyHtml = extractBodyContent(html);
     // Inject user-added custom content: header at top, extra fields + footer at the bottom
     const finalBodyHtml = injectCustomSections(bodyHtml, customSections);
     const styledFinalHtml = wrapStyledHtml(finalBodyHtml);
-    const sampleBodyHtml =
-      isSample && template.isPremium ? applySampleWatermark(finalBodyHtml) : null;
+
+    let sampleBodyHtml: string | null = null;
+    if (isSample && template.isPremium) {
+      const preview = truncateSampleBody(finalBodyHtml);
+      sampleBodyHtml = applySampleWatermark(
+        preview.truncated
+          ? preview.html +
+              '<div style="margin-top:16px;padding:10px 14px;border:1px dashed #dc2626;' +
+              'border-radius:8px;background:#fef2f2;color:#991b1b;font-size:12px;' +
+              'text-align:center;">Preview truncated — purchase this template to ' +
+              'receive the complete document.</div>'
+          : preview.html
+      );
+    }
 
     // DOCX: server-side (docx library works in Node.js)
     if (format === 'docx') {

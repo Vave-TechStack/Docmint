@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { GenerationOverlay } from '@/components/ui/generation-overlay';
 import { getDefaultImageForPlaceholder, replaceSvgDataUris, rasterizeSvgPlaceholders, isValidImageSource } from '@/lib/utils/image-placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
 import { ALLOWED_IMAGE_TYPES_ACCEPT, IMAGE_UPLOAD_MAX_MB } from '@/lib/utils/constants';
 import { validateImageUpload, isImageFieldKey } from '@/lib/utils/image-upload';
 import { injectCustomSections } from '@/lib/utils/custom-sections';
@@ -165,6 +166,22 @@ export default function InstantDownloadTemplatePage() {
       });
 
       /**
+       * Sanitize the resolved template BEFORE it is rendered or exported.
+       *
+       * `formValues` is interpolated raw (line 159), and the template HTML
+       * itself is user-authored, so both are attacker-controlled. The preview
+       * iframe currently relies on `sandbox="allow-same-origin"` *without*
+       * `allow-scripts` to stay inert — a single sandbox change, or the
+       * html2canvas path in generatePDFClientSide, would turn this into
+       * script execution in the DocMint origin. Sanitizing here makes the
+       * content safe regardless of the sink.
+       *
+       * Must run before replaceSvgDataUris, which promotes an inert
+       * <img src="data:image/svg+xml"> to live inline <svg>.
+       */
+      html = sanitizeHtmlFragment(html);
+
+      /**
        * Convert SVG data URI <img> tags to inline <svg> elements.
        *
        * Chrome/Chromium cannot load SVG data URIs in <img> tags inside
@@ -223,7 +240,9 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
 
   // ─── Client-side PDF generation using jsPDF (browser-native) ───
   const generatePDFClientSide = async (rawHtml: string, fileName: string): Promise<void> => {
-    let html = replaceSvgDataUris(rawHtml || '');
+    // Sanitize again on the export path: this HTML also reaches html2canvas
+    // inside jsPDF, and the export is a download rather than a sandboxed frame.
+    let html = replaceSvgDataUris(sanitizeHtmlFragment(rawHtml || ''));
     // jsPDF's doc.html() renders via html2canvas, which cannot load SVG images
     // in ANY form (inline <svg> logs "Error loading svg data:..."; base64 SVG
     // data-URI <img> tags log "Error loading image data:image/svg+xml;base64,...")
@@ -306,10 +325,10 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
   const performDownload = async (
     format: 'pdf' | 'docx',
     payment: { paymentId: string; orderId: string; signature: string }
-  ) => {
+  ): Promise<boolean> => {
     if (!template) {
       toast.error('Template not found. Please reload the page.');
-      return;
+      return false;
     }
     setDownloading(true);
     try {
@@ -326,9 +345,9 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ error: 'Download failed' }));
         toast.error(err.error || 'Download failed');
-        return;
+        return false;
       }
 
       // For DOCX: server returns binary blob (direct download)
@@ -348,15 +367,17 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
         const data = await res.json();
         if (!data.success || !data.data?.html) {
           toast.error(data.error || 'Failed to generate document');
-          return;
+          return false;
         }
         const { html } = data.data;
         await generatePDFClientSide(html, `${template.slug || template.name}.pdf`);
       }
 
       toast.success('Download complete!');
+      return true;
     } catch {
       toast.error('Download failed. Please try again.');
+      return false;
     } finally {
       setDownloading(false);
     }
@@ -414,13 +435,26 @@ td,th{border:1px solid #ddd;padding:6px 8px;text-align:left;word-wrap:break-word
     };
     // Store in ref immediately (no React state lag)
     paymentDetailsRef.current = payment;
-    setPaid(true);
-    setPaymentDetails(payment);
 
-    toast.success('Payment successful! Downloading your document...');
+    // Do NOT mark the document as paid yet.
+    //
+    // The client callback only proves Razorpay opened its window; the server
+    // still has to verify the signature, confirm the payment was captured at
+    // exactly ₹9, and atomically claim the one-time payment. Setting `paid`
+    // here showed "Payment confirmed! / Your document is ready" even when
+    // /api/instant/download returned 400 or 409 — a customer who had been
+    // charged was told everything was fine and then given no file.
+    toast.success('Payment received. Verifying and preparing your document...');
 
-    // Auto-download right after payment
-    await performDownload(downloadFormat, payment);
+    const ok = await performDownload(downloadFormat, payment);
+    if (ok) {
+      setPaid(true);
+      setPaymentDetails(payment);
+    } else {
+      // performDownload already surfaced the specific reason.
+      setPaid(false);
+      paymentDetailsRef.current = null;
+    }
   };
 
   // ─── Manual download button (uses ref for reliable payment details) ───

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock the document pipeline so no real HTML/DOCX generation or DB lookups
@@ -17,7 +17,7 @@ const { engineMocks, templateMocks, docxMocks, prismaMocks } = vi.hoisted(() => 
   },
   prismaMocks: {
     updateMany: vi.fn(),
-    findUnique: vi.fn(),
+    findFirst: vi.fn(),
     create: vi.fn(),
   },
 }));
@@ -81,10 +81,17 @@ describe('POST /api/instant/download', () => {
     // resetAllMocks clears call history AND implementations on both vi.fn()
     // hoisted mocks and spies, so no state can leak between tests.
     vi.resetAllMocks();
+    // Enable trusted proxy so x-forwarded-for headers are honored for rate limiting
+    process.env.TRUST_PROXY = 'true';
     verifySpy = vi.spyOn(PaymentService, 'verifyInstantDownloadPayment');
+    templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
     // Default: a fresh payment that hasn't been consumed and whose webhook
     // already recorded it (normal successful flow).
     prismaMocks.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  afterEach(() => {
+    delete process.env.TRUST_PROXY;
   });
 
   it('rejects requests missing payment fields with 400 before any work happens', async () => {
@@ -103,8 +110,9 @@ describe('POST /api/instant/download', () => {
     expect(await res.json()).toEqual({ success: false, error: 'Payment verification failed' });
     // Prove the rejection came from verification itself (gate actually ran)
     expect(verifySpy).toHaveBeenCalledWith('order_1', 'pay_1', 'forged-signature');
-    // ...and that the payment gate fails BEFORE template resolution and document generation
-    expect(templateMocks.resolveTemplateWithFallback).not.toHaveBeenCalled();
+    // Template checks run before payment verification, but no payment is claimed.
+    expect(templateMocks.resolveTemplateWithFallback).toHaveBeenCalledWith('tpl_1');
+    expect(prismaMocks.updateMany).not.toHaveBeenCalled();
     expect(engineMocks.generateFromTemplate).not.toHaveBeenCalled();
     expect(docxMocks.generate).not.toHaveBeenCalled();
   });
@@ -135,7 +143,7 @@ describe('POST /api/instant/download', () => {
       where: { razorpayPaymentId: 'pay_1', usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
-    expect(templateMocks.resolveTemplateWithFallback).toHaveBeenCalledWith('tpl_1');
+    expect(templateMocks.resolveTemplateWithFallback).toHaveBeenCalledTimes(1);
     expect(engineMocks.generateFromTemplate).toHaveBeenCalledWith(FAKE_TEMPLATE, {
       CompanyName: 'Acme Corp',
     });
@@ -144,7 +152,7 @@ describe('POST /api/instant/download', () => {
   it('rejects a replayed payment (already consumed) with 409 and no document', async () => {
     verifySpy.mockResolvedValue(true);
     prismaMocks.updateMany.mockResolvedValue({ count: 0 });
-    prismaMocks.findUnique.mockResolvedValue({ usedAt: new Date() });
+    prismaMocks.findFirst.mockResolvedValue({ usedAt: new Date() });
     templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
 
     const res = await post(VALID_PAYLOAD);
@@ -156,7 +164,7 @@ describe('POST /api/instant/download', () => {
   it('records + consumes the payment when the webhook has not landed yet', async () => {
     verifySpy.mockResolvedValue(true);
     prismaMocks.updateMany.mockResolvedValue({ count: 0 });
-    prismaMocks.findUnique.mockResolvedValue(null);
+    prismaMocks.findFirst.mockResolvedValue(null);
     prismaMocks.create.mockResolvedValue({});
     templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
 
@@ -179,8 +187,8 @@ describe('POST /api/instant/download', () => {
   it('rejects when two requests race to consume the same payment', async () => {
     verifySpy.mockResolvedValue(true);
     prismaMocks.updateMany.mockResolvedValue({ count: 0 });
-    prismaMocks.findUnique.mockResolvedValue(null);
-    prismaMocks.create.mockRejectedValue(new Error('Unique constraint failed'));
+    prismaMocks.findFirst.mockResolvedValue(null);
+    prismaMocks.create.mockRejectedValue(Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }));
 
     const res = await post(VALID_PAYLOAD);
     expect(res.status).toBe(409);
@@ -219,6 +227,8 @@ describe('POST /api/instant/download', () => {
     const res = await post(VALID_PAYLOAD);
     expect(res.status).toBe(404);
     expect((await res.json()).error).toContain('Template not found');
+    expect(verifySpy).not.toHaveBeenCalled();
+    expect(prismaMocks.updateMany).not.toHaveBeenCalled();
     expect(engineMocks.generateFromTemplate).not.toHaveBeenCalled();
   });
 
@@ -229,6 +239,69 @@ describe('POST /api/instant/download', () => {
     const res = await post(VALID_PAYLOAD);
     expect(res.status).toBe(403);
     expect((await res.json()).error).toContain('Premium');
+    expect(verifySpy).not.toHaveBeenCalled();
+    expect(prismaMocks.updateMany).not.toHaveBeenCalled();
     expect(engineMocks.generateFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('does not claim payment for financial validation errors and allows retry after correction', async () => {
+    const financialTemplate = {
+      ...FAKE_TEMPLATE,
+      placeholders: ['Basic', 'DA', 'HRA', 'Conveyance', 'Medical', 'SpecialAllowance', 'GrossEarnings'],
+    };
+    templateMocks.resolveTemplateWithFallback.mockResolvedValue(financialTemplate);
+    verifySpy.mockResolvedValue(true);
+
+    const invalid = await post({
+      ...VALID_PAYLOAD,
+      variables: {
+        Basic: '100',
+        DA: '0',
+        HRA: '0',
+        Conveyance: '0',
+        Medical: '0',
+        SpecialAllowance: '0',
+        GrossEarnings: '120',
+      },
+    });
+    expect(invalid.status).toBe(400);
+    expect(prismaMocks.updateMany).not.toHaveBeenCalled();
+
+    templateMocks.resolveTemplateWithFallback.mockResolvedValue(FAKE_TEMPLATE);
+    engineMocks.generateFromTemplate.mockResolvedValue('<html>Acme Corp</html>');
+    const retry = await post(VALID_PAYLOAD);
+    expect(retry.status).toBe(200);
+    expect(prismaMocks.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a terminal delivery error after a claim and rejects replay', async () => {
+    verifySpy.mockResolvedValue(true);
+    engineMocks.generateFromTemplate.mockRejectedValueOnce(new Error('renderer unavailable'));
+    let claims = 0;
+    prismaMocks.updateMany.mockImplementation(async () => ({ count: claims++ === 0 ? 1 : 0 }));
+    prismaMocks.findFirst.mockResolvedValue({ usedAt: new Date() });
+
+    const failedDelivery = await post(VALID_PAYLOAD);
+    expect(failedDelivery.status).toBe(500);
+    expect((await failedDelivery.json()).error).toContain('Payment was reserved');
+
+    const replay = await post(VALID_PAYLOAD);
+    expect(replay.status).toBe(409);
+    expect(engineMocks.generateFromTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows only one of two concurrent requests to claim and generate a download', async () => {
+    verifySpy.mockResolvedValue(true);
+    engineMocks.generateFromTemplate.mockResolvedValue('<html>Acme Corp</html>');
+    let claims = 0;
+    prismaMocks.updateMany.mockImplementation(async () => {
+      claims += 1;
+      return { count: claims === 1 ? 1 : 0 };
+    });
+    prismaMocks.findFirst.mockResolvedValue({ usedAt: new Date() });
+
+    const responses = await Promise.all([post(VALID_PAYLOAD), post(VALID_PAYLOAD)]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    expect(engineMocks.generateFromTemplate).toHaveBeenCalledTimes(1);
   });
 });

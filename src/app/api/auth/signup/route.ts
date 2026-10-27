@@ -5,6 +5,9 @@ import { prisma } from '@/lib/prisma';
 import { EmailService } from '@/lib/email/email-service';
 import { EMAIL_VERIFICATION_TOKEN_TTL_MS } from '@/lib/utils/constants';
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { hashToken } from '@/lib/security/crypto';
+import { safeTokenIndex } from '@/lib/security/token-lookup';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 export async function POST(request: Request) {
   try {
@@ -28,6 +31,17 @@ export async function POST(request: Request) {
         { success: false, error: 'Missing required fields' },
         { status: 400 }
       );
+    }
+
+    if (typeof password !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'A valid password is required' },
+        { status: 400 }
+      );
+    }
+    const passwordError = passwordValidationError(password);
+    if (passwordError) {
+      return NextResponse.json({ success: false, error: passwordError }, { status: 400 });
     }
 
     if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -98,10 +112,13 @@ export async function POST(request: Request) {
     try {
       // "v_" prefix marks this as a verification token (see verify-email route).
       const verificationToken = `v_${crypto.randomBytes(32).toString('hex')}`;
+      const tokenHash = await hashToken(verificationToken);
       await prisma.verificationToken.create({
         data: {
           identifier: normalizedEmail,
-          token: verificationToken,
+          token: tokenHash,
+          tokenIndex: safeTokenIndex(verificationToken),
+          purpose: 'verify',
           expires: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
         },
       });

@@ -4,6 +4,7 @@ import {
   PREMIUM_PRICE,
   ANNUAL_PREMIUM_PRICE,
 } from '@/lib/utils/constants';
+import { timingSafeEqualStr } from '@/lib/security/crypto';
 
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID!;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET!;
@@ -77,7 +78,22 @@ export class PaymentService {
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
+
+      // The HTTP status and Razorpay's own error envelope were both ignored.
+      // A 401 (bad key) or 500 therefore "succeeded" with
+      // `{ id: undefined, amount: undefined }`, and the client validated only
+      // `order.key` before calling razorpay.open() with order_id: "" — the
+      // checkout window opened and failed with no actionable message.
+      if (!response.ok) {
+        const description =
+          (data && (data.description || data.error?.description)) || `HTTP ${response.status}`;
+        console.error(`Razorpay order creation rejected (${response.status}): ${description}`);
+        throw new Error(`Payment provider rejected the order: ${description}`);
+      }
+      if (!data || !data.id) {
+        throw new Error('Payment provider returned an order without an id');
+      }
 
       return {
         id: data.id,
@@ -87,7 +103,11 @@ export class PaymentService {
       };
     } catch (error) {
       console.error('Razorpay order creation failed:', error);
-      throw new Error('Failed to create payment order');
+      throw new Error(
+        error instanceof Error && error.message.startsWith('Payment provider')
+          ? error.message
+          : 'Failed to create payment order'
+      );
     }
   }
 
@@ -126,7 +146,11 @@ export class PaymentService {
 
   /**
    * Verify Razorpay payment signature
-   * Uses ESM import pattern for compatibility with Next.js App Router
+   *
+   * The comparison is constant-time. `expectedSignature === signature`
+   * short-circuits on the first differing byte, so an attacker able to measure
+   * response latency can recover the expected MAC incrementally and forge a
+   * valid signature for any order/payment pair.
    */
   static async verifyPaymentAsync(
     orderId: string,
@@ -138,7 +162,7 @@ export class PaymentService {
       .update(`${orderId}|${paymentId}`)
       .digest('hex');
 
-    return expectedSignature === signature;
+    return timingSafeEqualStr(expectedSignature, String(signature ?? ''));
   }
 
   /**

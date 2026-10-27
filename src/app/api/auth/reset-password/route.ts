@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { invalidateUserCache } from '@/lib/security/authorization';
+import { resolveVerificationToken, consumeVerificationToken } from '@/lib/security/token-lookup';
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * POST /api/auth/reset-password  { token, password }
- *
- * Validates the single-use password-reset token, then sets the account's new
- * password. Tokens are purpose-tagged with an "r_" prefix so verification
- * tokens can never reset a password and vice versa.
- */
 export async function POST(request: NextRequest) {
   try {
+    // Before any DB or bcrypt work, keyed by IP.
+    if (!checkRateLimit(`reset-password:${getClientIp(request)}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: 'Too many attempts. Please wait a minute.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const token = typeof body?.token === 'string' ? body.token : '';
     const password = typeof body?.password === 'string' ? body.password : '';
@@ -24,33 +29,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (password.length < 8) {
+    if (typeof body?.password !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Password must be at least 8 characters' },
+        { success: false, error: 'A valid password is required' },
         { status: 400 }
       );
     }
+    const passwordError = passwordValidationError(password);
+    if (passwordError) {
+      return NextResponse.json({ success: false, error: passwordError }, { status: 400 });
+    }
 
-    const record = await prisma.verificationToken.findUnique({ where: { token } });
-    if (!record) {
+    // Indexed lookup with a bounded fallback for legacy rows. See
+    // src/lib/security/token-lookup.ts.
+    const matched = await resolveVerificationToken(token, { purpose: 'reset' });
+    if (!matched) {
       return NextResponse.json(
         { success: false, error: 'Invalid or already-used reset link' },
         { status: 400 }
       );
     }
 
-    if (record.expires < new Date()) {
-      return NextResponse.json(
-        { success: false, error: 'This reset link has expired. Please request a new one.' },
-        { status: 410 }
-      );
-    }
-
     // The token's identifier is the account email.
     const hashedPassword = await bcrypt.hash(password, 12);
     const updated = await prisma.user.updateMany({
-      where: { email: record.identifier, deletedAt: null },
-      data: { passwordHash: hashedPassword },
+      where: { email: matched.identifier, deletedAt: null },
+      data: { passwordHash: hashedPassword, passwordVersion: { increment: 1 } },
     });
 
     if (updated.count === 0) {
@@ -61,7 +65,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Single-use token.
-    await prisma.verificationToken.delete({ where: { token } }).catch(() => {});
+    await consumeVerificationToken(matched.tokenHash);
+
+    // Invalidate revalidation cache so the new password takes effect immediately
+    // on subsequent requests rather than waiting for the TTL to expire.
+    const updatedUser = await prisma.user.findFirst({ where: { email: matched.identifier, deletedAt: null }, select: { id: true } });
+    if (updatedUser) {
+      invalidateUserCache(updatedUser.id);
+    }
 
     return NextResponse.json({
       success: true,

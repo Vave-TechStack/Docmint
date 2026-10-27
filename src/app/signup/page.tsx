@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/text-area';
 import { Card, CardContent } from '@/components/ui/card';
 import { Loader2, Eye, EyeOff, ArrowRight } from 'lucide-react';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -38,8 +39,9 @@ export default function SignupPage() {
       return;
     }
 
-    if (form.password.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    const passwordError = passwordValidationError(form.password);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
 

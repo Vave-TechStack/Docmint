@@ -8,6 +8,8 @@ const { prismaMocks, emailMocks } = vi.hoisted(() => ({
     subscription: { findFirst: vi.fn() },
     organization: { update: vi.fn() },
     auditLog: { create: vi.fn() },
+    payment: { findFirst: vi.fn() },
+    user: { findFirst: vi.fn() },
     $transaction: vi.fn(),
   },
   emailMocks: {
@@ -22,6 +24,8 @@ vi.mock('@/lib/email/email-service', () => ({ EmailService: emailMocks }));
 import { POST, PATCH } from './route';
 import { auth } from '@/lib/auth';
 import { PaymentService } from '@/lib/payment/razorpay';
+import { mockRevalidation, resetSessionUser } from '@/test/guard-harness';
+import { __clearRevalidationCache } from '@/lib/security/authorization';
 
 // NextAuth types `auth` as a middleware wrapper; the route only uses its
 // resolved session, so cast the mock to that shape.
@@ -46,6 +50,7 @@ const SESSION = {
     email: 'user@acme.com',
     name: 'Test User',
     role: 'USER',
+    passwordVersion: 0,
   },
 };
 
@@ -69,7 +74,7 @@ const FAKE_SUBSCRIPTION = {
 function post(body: unknown): Promise<Response> {
   const request = new NextRequest('http://localhost:3000/api/subscriptions', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
     body: JSON.stringify(body),
   });
   return POST(request);
@@ -78,7 +83,7 @@ function post(body: unknown): Promise<Response> {
 function patch(body: unknown): Promise<Response> {
   const request = new NextRequest('http://localhost:3000/api/subscriptions', {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
     body: JSON.stringify(body),
   });
   // PATCH can technically fall through without returning in some type-level
@@ -91,9 +96,14 @@ describe('POST /api/subscriptions', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    __clearRevalidationCache();
+    resetSessionUser();
     authMock.mockResolvedValue(SESSION);
+    mockRevalidation(prismaMocks.user.findFirst, () => authMock());
     // No active subscription by default
     prismaMocks.subscription.findFirst.mockResolvedValue(null);
+    // No prior payment row claiming this razorpay payment id
+    prismaMocks.payment.findFirst.mockResolvedValue(null);
     // Run the transaction body against a fake tx (create paths only for POST)
     prismaMocks.$transaction.mockImplementation(
       async (fn: (tx: Record<string, unknown>) => unknown) =>
@@ -119,7 +129,9 @@ describe('POST /api/subscriptions', () => {
       razorpaySignature: 'sig_1',
     });
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ success: false, error: 'Unauthorized' });
+    // The shared guard produces this message; the assertion pins the status
+    // code and the absence of side effects, not the copy.
+    expect((await res.json()).success).toBe(false);
     expect(verifySpy).not.toHaveBeenCalled();
   });
 
@@ -187,6 +199,65 @@ describe('POST /api/subscriptions', () => {
     expect(verifySpy).not.toHaveBeenCalled();
     expect(prismaMocks.$transaction).not.toHaveBeenCalled();
   });
+
+  it('scopes the active-subscription check to the current organization', async () => {
+    verifySpy.mockResolvedValue(true);
+    await post({
+      razorpayOrderId: 'order_sub',
+      razorpayPaymentId: 'pay_sub',
+      razorpaySignature: 'sig',
+    });
+    // A user who belongs to several organizations must not be able to buy
+    // Premium for the current org using a subscription bought elsewhere, so
+    // the duplicate check is keyed on org as well as user.
+    expect(prismaMocks.subscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userId: 'user_1',
+          organizationId: 'org_1',
+        }),
+      })
+    );
+  });
+
+  it('rejects replaying a razorpay payment that already funded a subscription', async () => {
+    // The same captured payment id submitted twice would otherwise mint a
+    // second subscription, since nothing claimed the id before verification.
+    prismaMocks.payment.findFirst.mockResolvedValue({
+      id: 'pay_row_1',
+      status: 'SUCCESS',
+      subscriptionId: 'sub_existing',
+    });
+    const res = await post({
+      razorpayOrderId: 'order_sub',
+      razorpayPaymentId: 'pay_already_used',
+      razorpaySignature: 'sig',
+    });
+    expect(res.status).toBe(409);
+    expect(verifySpy).not.toHaveBeenCalled();
+    expect(prismaMocks.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a cross-origin POST (CSRF)', async () => {
+    const request = new NextRequest('http://localhost:3000/api/subscriptions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({
+        razorpayOrderId: 'order_sub',
+        razorpayPaymentId: 'pay_sub',
+        razorpaySignature: 'sig',
+      }),
+    });
+    const res = await POST(request);
+    expect(res.status).toBe(403);
+    expect(verifySpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request missing any payment field before touching the database', async () => {
+    const res = await post({ razorpayOrderId: 'order_sub' });
+    expect(res.status).toBe(400);
+    expect(verifySpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('PATCH /api/subscriptions (renew)', () => {
@@ -194,8 +265,12 @@ describe('PATCH /api/subscriptions (renew)', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    __clearRevalidationCache();
+    resetSessionUser();
     authMock.mockResolvedValue(SESSION);
+    mockRevalidation(prismaMocks.user.findFirst, () => authMock());
     prismaMocks.subscription.findFirst.mockResolvedValue(FAKE_SUBSCRIPTION);
+    prismaMocks.payment.findFirst.mockResolvedValue(null);
     prismaMocks.$transaction.mockImplementation(
       async (fn: (tx: Record<string, unknown>) => unknown) =>
         fn({

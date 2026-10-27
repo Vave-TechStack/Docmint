@@ -1,518 +1,432 @@
-# DocMint Architecture Document
+# DocMint Architecture
 
-## Enterprise AI-Powered Document Generation Platform
+## What this document is
 
----
+This describes **what DocMint actually does today**, verified against the
+source tree. Earlier versions of this file described a system that was never
+built — Redis caching, BullMQ queues, S3/R2 storage, Puppeteer rendering,
+Kubernetes deployment, OTP and TOTP two-factor authentication, and a set of API
+routes that do not exist. Those sections have been removed rather than
+reworded, because a design document that describes absent components is worse
+than no document at all.
 
-## Table of Contents
-1. [System Overview](#1-system-overview)
-2. [Tech Stack](#2-tech-stack)
-3. [Architecture Principles](#3-architecture-principles)
-4. [System Architecture](#4-system-architecture)
-5. [Multi-Tenant Data Model](#5-multi-tenant-data-model)
-6. [Microservices Architecture](#6-microservices-architecture)
-7. [Document Engine Design](#7-document-engine-design)
-8. [Security Architecture](#8-security-architecture)
-9. [Scalability Design](#9-scalability-design)
-10. [Deployment Strategy](#10-deployment-strategy)
-11. [API Contracts](#11-api-contracts)
-12. [Database Schema](#12-database-schema)
+Anything not implemented here is listed explicitly under
+[§10 Not implemented](#10-not-implemented).
 
 ---
 
-## 1. System Overview
+## 1. System overview
 
-DocMint is a **production-ready enterprise SaaS platform** for AI-powered business document generation. It serves multiple verticals including HR, Finance, Legal, Education, Medical, Manufacturing, and Real Estate sectors.
+DocMint is a multi-tenant SaaS for generating business documents as PDF or
+DOCX. It has two revenue paths:
 
-### Core Capabilities
-- **200+ Document Types** across 10+ categories
-- **AI-powered content generation** with variable detection
-- **Multi-tenant isolation** with complete data separation
-- **Dual business model**: Instant Download (₹9) + Premium Subscription (₹299/mo)
-- **Real-time document editing** with drag-and-drop interface
-- **Enterprise-grade security** with SOC2/GDPR readiness
+- **Instant download** — ₹9 per document, no account required.
+- **Premium subscription** — ₹299/month or ₹2,870/year, unlocks premium
+  templates for the whole organization.
 
----
+Users pick one of 30 seeded templates across 12 categories, fill in the
+placeholders, preview the result, and export. There is also a drag-and-drop
+payslip designer for building payslip layouts visually.
 
-## 2. Tech Stack
+### Scale as built
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Frontend** | Next.js 16 (App Router) | SSR, SSG, ISR for optimal performance |
-| **UI Framework** | React 19 + TypeScript | Type-safe component architecture |
-| **Styling** | TailwindCSS v4 + Shadcn UI | Utility-first responsive design |
-| **Database** | PostgreSQL 16 | Relational data with JSONB for flexibility |
-| **ORM** | Prisma 7 | Type-safe database access |
-| **Auth** | NextAuth v5 | OAuth, OTP, 2FA, credentials |
-| **Caching** | Redis 7 + Upstash | Session cache, rate limiting, queues |
-| **Queue** | BullMQ + Redis | Background job processing |
-| **PDF Engine** | jsPDF + Puppeteer | Client & server-side PDF generation |
-| **DOCX Engine** | docy | Microsoft Word document generation |
-| **Payments** | Razorpay | Subscription & instant payments |
-| **AI** | OpenAI / Gemini API | Content generation, translation |
-| **Storage** | AWS S3 / Cloudflare R2 | Document & media storage |
-| **Email** | Resend / SendGrid | Transactional emails |
-| **CDN** | Cloudflare / Vercel Edge | Global content delivery |
-| **Monitoring** | Sentry + DataDog | Error tracking & APM |
-| **Container** | Docker + Kubernetes | Orchestration & scaling |
+| | |
+|---|---|
+| API routes | 37 |
+| Pages | 35 |
+| Prisma models | 25 |
+| Prisma enums | 14 |
+| Database migrations | 1 |
+| Unit tests | 1129 across 49 files |
+| E2E tests | 53 by default, 65 with destructive suites |
 
 ---
 
-## 3. Architecture Principles
+## 2. Tech stack (as built)
 
-### Clean Architecture Layers
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16.3.7 (App Router) + React 19.2 + TypeScript |
+| Edge | `src/proxy.ts` — renamed from `middleware.ts` in Next 16 |
+| Styling | TailwindCSS v4 + Radix UI |
+| Database | PostgreSQL via Prisma 7 (Neon and pg driver adapters) |
+| Auth | NextAuth v5 — credentials, Google, Microsoft Entra ID |
+| Payments | Razorpay |
+| Email | Resend |
+| Documents | jsPDF (PDF), `docx` (Word), Tiptap (editor) |
+| Designer | @dnd-kit |
+| Testing | Vitest (unit), Playwright (staging E2E) |
+| Container | Docker + docker-compose + nginx |
 
-```
-┌──────────────────────────────────────────────┐
-│                 Presentation                  │
-│          (Next.js Pages / API Routes)         │
-├──────────────────────────────────────────────┤
-│               Application Layer               │
-│      (Use Cases / Services / Orchestrators)    │
-├──────────────────────────────────────────────┤
-│                 Domain Layer                  │
-│   (Entities / Value Objects / Aggregates)     │
-├──────────────────────────────────────────────┤
-│               Infrastructure Layer            │
-│  (Database / Cache / Queue / External APIs)   │
-└──────────────────────────────────────────────┘
-```
-
-### Domain-Driven Design (DDD) Bounded Contexts
-
-```
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│   Identity   │  │  Document   │  │   Template  │
-│   & Access   │  │   Engine    │  │   System    │
-├─────────────┤  ├─────────────┤  ├─────────────┤
-│ • Auth       │  │ • Generation│  │ • CRUD      │
-│ • Users      │  │ • Editor    │  │ • Variables │
-│ • Tenants    │  │ • Export    │  │ • Library   │
-│ • Roles      │  │ • AI        │  │ • Import    │
-└─────────────┘  └─────────────┘  └─────────────┘
-
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  Subscription │  │   Payment   │  │    Admin    │
-├─────────────┤  ├─────────────┤  ├─────────────┤
-│ • Plans      │  │ • Razorpay  │  │ • Dashboard │
-│ • Billing    │  │ • Invoices  │  │ • Users     │
-│ • Renewals   │  │ • Refunds   │  │ • Settings  │
-│ • Grace      │  │ • Coupons   │  │ • Audit     │
-└─────────────┘  └─────────────┘  └─────────────┘
-
-┌─────────────┐  ┌─────────────┐
-│   Company   │  │     AI      │
-│   Profile   │  │   Engine    │
-├─────────────┤  ├─────────────┤
-│ • Branding   │  │ • Generate  │
-│ • Signature  │  │ • Translate │
-│ • Bank Info  │  │ • Grammar   │
-│ • Theme      │  │ • Auto-fill │
-└─────────────┘  └─────────────┘
-```
-
-### SOLID Principles Applied
-
-1. **S**ingle Responsibility: Each service handles one concern
-2. **O**pen/Closed: Template system open for extension, closed for modification
-3. **L**iskov Substitution: All document types inherit from base Document
-4. **I**nterface Segregation: Fine-grained interfaces per bounded context
-5. **D**ependency Inversion: High-level modules depend on abstractions
+There is **no cache service, no job queue, and no object storage**. See §10.
 
 ---
 
-## 4. System Architecture
-
-### High-Level Architecture Diagram
+## 3. Request path
 
 ```
-                                ┌─────────────┐
-                                │   CDN /     │
-                                │  Edge Cache │
-                                └──────┬──────┘
-                                       │
-┌──────────┐  ┌──────────┐  ┌──────────┴──────────┐
-│  Mobile   │  │  Browser │  │      Next.js        │
-│  Users    │  │  Users   │  │   (App Router)      │
-└─────┬────┘  └────┬─────┘  │  - SSR/ISR/SSG      │
-      │            │        │  - API Routes        │
-      └────────────┴────────┤  - Middleware        │
-                            │  - Edge Functions    │
-                            └──────────┬──────────┘
-                                       │
-                            ┌──────────┴──────────┐
-                            │    Rate Limiter      │
-                            │   (Redis/Upstash)    │
-                            └──────────┬──────────┘
-                                       │
-              ┌────────────────────────┼────────────────────────┐
-              │                        │                        │
-    ┌─────────┴─────────┐  ┌──────────┴──────────┐  ┌─────────┴─────────┐
-    │   Auth Service    │  │  Document Service   │  │   Payment Service │
-    │   (NextAuth v5)   │  │  (Next.js API)      │  │   (Razorpay)      │
-    └─────────┬─────────┘  └──────────┬──────────┘  └─────────┬─────────┘
-              │                        │                        │
-    ┌─────────┴─────────┐  ┌──────────┴──────────┐  ┌─────────┴─────────┐
-    │   PostgreSQL      │  │   Redis Cache       │  │   Document Queue  │
-    │   (Primary DB)    │  │   (Session + Cache) │  │   (BullMQ)        │
-    └───────────────────┘  └─────────────────────┘  └───────────────────┘
-              │                        │                        │
-    ┌─────────┴─────────┐  ┌──────────┴──────────┐  ┌─────────┴─────────┐
-    │   S3 / R2         │  │   Email Service     │  │   AI Service      │
-    │   (File Storage)  │  │   (Resend)          │  │   (OpenAI)        │
-    └───────────────────┘  └─────────────────────┘  └───────────────────┘
+Browser
+  → nginx (TLS termination, webhook path protection)
+    → src/proxy.ts   [edge]  security headers, CSP nonces,
+    │                        HSTS (verified HTTPS only), page auth gate
+      → App Router
+        → page.tsx (almost all client components)
+          → fetch() → /api/* route handler
+            → src/lib/security/authorization.ts   guard + tenant scope
+              → Prisma → PostgreSQL
 ```
 
-### Request Flow
-
-```
-User Request → CDN → Next.js Edge → Rate Limiter → Middleware (Auth/Tenant)
-  → App Router → Server Component → Data Fetching (React Server Components)
-  → Prisma → PostgreSQL → Response → Cache (Redis) → CDN
-```
+A structural note: **33 of 35 pages are client components.** Only `/terms` and
+`/privacy` are React Server Components. Pages fetch their own data from the
+browser, so there is no server-side data layer and the full API surface is
+exposed to the client. This is a known limitation, not an accident.
 
 ---
 
-## 5. Multi-Tenant Data Model
+## 4. Multi-tenancy
 
-### Tenant Isolation Strategy
+`Organization` is the tenant boundary. Isolation is **row-level**, not
+schema-per-tenant.
 
-**Schema-per-tenant is not used** due to scalability concerns at 10M+ users. Instead, we use **row-level tenant isolation** with a composite key approach.
+### How the tenant is resolved
 
-```
-┌─────────────────────────────────────────────┐
-│              Organization Table              │
-├─────────────────────────────────────────────┤
-│ id           │ UUID (PK)                     │
-│ name         │ String                        │
-│ slug         │ String (UNIQUE)               │
-│ domain       │ String (UNIQUE, nullable)     │
-│ plan         │ Enum (FREE/PREMIUM/ENTERPRISE)│
-│ status       │ Enum (ACTIVE/SUSPENDED/DELETED)│
-│ settings     │ JSONB (tenant config)         │
-│ created_at   │ DateTime                      │
-├─────────────────────────────────────────────┤
-│       ALL domain tables have tenant_id       │
-└─────────────────────────────────────────────┘
-```
+From the **database**, on every guarded request — never from a request header
+and never from the JWT.
 
-### Tenant Context Propagation
+`src/lib/tenant/multi-tenant.ts` previously read `x-tenant-id`, `x-user-id`,
+and `x-user-role` from request headers and was deleted: those headers are
+client-reachable and would have let any caller assert their own tenant and
+role. Its only remaining descendant is the informational `x-tenant-slug`
+header set by the proxy from the subdomain, which is not used for
+authorization.
 
-```typescript
-// Middleware extracts tenant from:
-// 1. JWT token (for authenticated users) - tenant_id claim
-// 2. Subdomain (for org-specific access) - org.saas.com
-// 3. Custom domain (for enterprise) - docs.company.com
+### The guard layer
 
-// Tenant context flows through:
-// Next.js Middleware → Request Headers → Prisma Middleware → All Queries
-```
+`src/lib/security/authorization.ts` is the single entry point:
 
----
+- `requireAuth` — any signed-in user.
+- `requireUserScope` — signed-in user **with** an organization. Returns the
+  org id so callers never assert a non-null JWT claim.
+- `requireAdmin` — `ADMIN` or `SUPER_ADMIN`.
+- `requireSuperAdmin` — platform-wide and money-moving operations only.
+- `resolveOptionalScope` — for routes serving both anonymous and signed-in
+  callers (public template preview/download).
+- `crossTenant(guard, recordOrgId)` — denies a record owned by another org.
+- `scopeWhere(guard, where)` — injects the org id into a Prisma `where`
+  clause *after* the caller's filters, so a spread cannot override it.
 
-## 6. Document Engine Design
+### Why it is built this way
 
-### Architecture
+The session is a stateless JWT, so `role`, `organizationId` and
+`emailVerified` are snapshotted at sign-in. Trusting them for the token's
+lifetime meant a user demoted from `ADMIN` to `USER`, suspended, or moved
+between organizations kept their old role and tenant — for the default 30-day
+Auth.js token lifetime. That bypassed the premium paywall (the admin branch
+skips the subscription check) and exposed the previous tenant's private
+templates.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  Document Engine                      │
-├─────────────────────────────────────────────────────┤
-│                    Public API                         │
-│  generateDocument()  previewDocument()  exportDoc()  │
-├─────────────────────────────────────────────────────┤
-│            Document Pipeline Orchestrator             │
-├───────────┬───────────┬───────────┬─────────────────┤
-│ Template  │ Variable  │ Layout    │ Media           │
-│ Engine    │ Resolver  │ Engine    │ Processor       │
-├───────────┴───────────┴───────────┴─────────────────┤
-│            Export Adapters                            │
-│  PDFAdapter │ DOCXAdapter │ HTMLAdapter │ PrintAdapter│
-├─────────────────────────────────────────────────────┤
-│            Caching Layer (Redis)                      │
-└─────────────────────────────────────────────────────┘
-```
+Every guard therefore re-reads the user row:
 
-### Document Generation Flow
+- **Fails closed.** A DB error rejects the request rather than trusting a
+  stale token.
+- **DB-authoritative role and org**, not the token.
+- **Suspended or soft-deleted users and organizations** are rejected
+  immediately rather than at token expiry.
+- **`passwordVersion`** comparison revokes sessions issued before a password
+  change or reset.
+- A short-lived (5 s) in-process cache keeps this off the hot path.
 
-```
-1. User selects template
-2. Placeholder detection & extraction
-3. Form generation from placeholders
-4. User fills form data
-5. Variable resolution with Company branding
-6. Document rendering (HTML Canvas)
-7. Preview generation
-8. Export to target format (PDF/DOCX/HTML)
-9. Digital signing (if enabled)
-10. QR code generation for verification
-11. Watermark application
-12. Download/Email/Share
-```
+### Ownership-column protection
 
-### Placeholder System
-
-```typescript
-// Placeholder detection regex
-const PLACEHOLDER_REGEX = /\{\{(\w+)\}\}/g;
-
-// Built-in placeholders mapped to resolvers
-const BUILT_IN_PLACEHOLDERS = {
-  'CompanyName': CompanyService.getName,
-  'CompanyLogo': CompanyService.getLogo,
-  'CurrentDate': () => new Date().toLocaleDateString(),
-  'CurrentYear': () => new Date().getFullYear(),
-  'EmployeeName': DocumentDataService.getEmployeeName,
-  // ... more built-ins
-};
-
-// Custom placeholders from company profile
-const COMPANY_PLACEHOLDERS = {
-  'GST': CompanyProfileService.getGST,
-  'PAN': CompanyProfileService.getPAN,
-  'CIN': CompanyProfileService.getCIN,
-};
-```
+`Prisma.DocumentUpdateInput` is a union that includes
+`DocumentUncheckedUpdateInput`, which accepts `organizationId`, `userId`,
+`deletedAt` and every other ownership column — and that TypeScript annotation
+is erased at runtime. Spreading a request body straight into `data` let any
+signed-in user re-parent their own document into another tenant with one
+PATCH. `DocumentEngine.pickUpdatableFields` is an explicit allowlist that
+excludes all ownership and lifecycle columns.
 
 ---
 
-## 7. Security Architecture
+## 5. Data model
 
-### Authentication Flow
+25 models. The tenant-scoped ones carry `organizationId`.
 
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  User     │───▶│ NextAuth │───▶│  JWT     │───▶│  Session │
-│  Request  │    │  v5      │    │  Issue   │    │  Cache   │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘
-                     │
-              ┌──────┴──────┐
-              │  Providers   │
-              │ • Credentials│
-              │ • Google     │
-              │ • Microsoft  │
-              │ • OTP        │
-              │ • TOTP (2FA) │
-              └─────────────┘
-```
+**Tenant & identity** — `Organization`, `User`, `Account`, `Session`,
+`VerificationToken`, `Authenticator`.
 
-### Security Layers
+**Documents** — `Document`, `DocumentVersion`, `DocumentShare`, `Folder`,
+`Category`.
 
-1. **Network Security**: WAF, Cloud Armor, DDoS protection
-2. **Application Security**: CSRF tokens, XSS sanitization, SQL injection prevention (Prisma)
-3. **Authentication**: JWT with short expiry (15min) + Refresh tokens (7 days)
-4. **Authorization**: RBAC with role hierarchy (Admin > Manager > User)
-5. **Data Security**: AES-256 encryption at rest, TLS 1.3 in transit
-6. **API Security**: Rate limiting, request validation (Zod), audit logging
+**Templates** — `Template`, `TemplateVersion`.
 
-### Multi-Tenant Security
+**Billing** — `Subscription`, `Payment`, `Coupon`.
 
-```typescript
-// Every database query MUST include tenant_id filter
-prisma.document.findMany({
-  where: {
-    tenantId: currentTenantId,  // REQUIRED
-    userId: currentUserId,      // For user-scoped queries
-  }
-});
+**Operations** — `AuditLog`, `SupportTicket`, `SupportTicketReply`,
+`Notification`, `NotificationRead`.
 
-// Prisma middleware enforces tenant isolation
-prisma.$use(async (params, next) => {
-  if (isDomainModel(params.model)) {
-    params.args.where = {
-      ...params.args.where,
-      tenantId: getCurrentTenantId(),
-    };
-  }
-  return next(params);
-});
-```
+**Platform (global, no `organizationId`)** — `BlogPost`, `SystemSetting`,
+`EmailTemplate`, `CompanyProfile`.
+
+### Notable details
+
+- **Soft delete** — `Document.deletedAt`; the admin user-delete path sets it.
+- **Sharing** — `DocumentShare` with a 24-byte CSPRNG token, optional bcrypt
+  password, expiry, and `maxDownloads` enforced by an atomic counter.
+- **Payments** — `razorpayOrderId` and `razorpayPaymentId` are both unique.
+  `Payment.usedAt` is the one-time consume marker for ₹9 downloads. Both
+  `organizationId` and `userId` are **nullable**, because instant downloads
+  are anonymous.
+- **Auth tokens** — stored bcrypt-hashed and purpose-tagged: verification
+  links are prefixed `v_`, password-reset links `r_`. A reset token cannot be
+  consumed as a verification token.
+- **Platform globals** — `BlogPost`, `SystemSetting` and `EmailTemplate` have
+  no tenant column and are `SUPER_ADMIN`-only.
 
 ---
 
-## 8. Scalability Design
-
-### Horizontal Scaling Strategy
+## 6. Authentication
 
 ```
-┌──────────────────────────────────────────────────┐
-│                 Load Balancer                      │
-│              (Cloudflare / AWS ALB)                │
-└─────────────────────┬────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        │              │              │
-┌───────┴───────┐ ┌───┴───────┐ ┌───┴───────┐
-│  Next.js      │ │  Next.js  │ │  Next.js  │
-│  Instance 1   │ │  Instance2│ │  Instance N│
-│  (Docker)     │ │  (Docker) │ │  (Docker)  │
-└───────┬───────┘ └───┬───────┘ └───┬───────┘
-        │              │              │
-        └──────────────┼──────────────┘
-                       │
-              ┌────────┴────────┐
-              │   PostgreSQL    │
-              │  (Primary + Read │
-              │   Replicas)     │
-              └─────────────────┘
-                       │
-              ┌────────┴────────┐
-              │     Redis       │
-              │  (Cluster Mode) │
-              └─────────────────┘
+Credentials (bcrypt, cost 12)  ─┐
+Google OAuth                   ─┼─→ NextAuth v5 ─→ encrypted JWT (JWE) ─→ session
+Microsoft Entra ID             ─┘
 ```
 
-### Caching Strategy
+- **No auto-linking on OAuth.** A provider sign-in requires an existing,
+  matching account; a new email from an unlinked provider does not create one.
+- **JWT sessions.** The session token is a JWE (`alg=dir`,
+  `enc=A256CBC-HS512`), not a plain signed JWT. `src/proxy.ts` replicates
+  Auth.js's HKDF key derivation to verify it at the edge.
+- **Email verification** is required before sign-in completes.
+- **`passwordVersion`** increments on reset; guards reject any session issued
+  at a lower version.
+- **Verification/reset tokens** are single-use and bcrypt-hashed at rest. A
+  keyed HMAC digest (`tokenIndex`) is stored alongside the hash so the owning
+  row can be found with an index instead of a sweep. **The migration adding
+  that column has not been applied to any environment**, so today the lookup
+  still falls back to a bounded sweep for rows without an index. See
+  [`TOKEN_LOOKUP_PROPOSAL.md`](./TOKEN_LOOKUP_PROPOSAL.md).
+- **Email verification is enforced** at sign-in, not merely requested. An
+  account that never clicked its verification link cannot obtain a session.
 
-| Cache Type | TTL | Storage | Purpose |
-|-----------|-----|---------|---------|
-| Session | 24h | Redis | User sessions |
-| Templates | 1h | Redis | Frequently used templates |
-| Company Profile | 30min | Redis | Branding data |
-| API Responses | 5min | Redis | Rate-limited endpoints |
-| Static Assets | 1yr | CDN | Images, fonts, CSS |
+### The edge auth gate
 
-### Queue System (BullMQ)
+`src/proxy.ts` redirects unauthenticated visitors away from `/dashboard`,
+`/documents`, `/company`, `/settings`, `/subscription`, `/admin`,
+`/payslip-designer`, `/templates/new` and `/templates/[id]/edit` before the
+page renders. API routes self-protect; the proxy does not gate them.
 
-```
-┌────────────────┐
-│  Document Job  │
-│  Queue          │
-├────────────────┤
-│ • PDF Generation│
-│ • DOCX Export   │
-│ • Email Send    │
-│ • AI Generation │
-│ • Bulk Export   │
-└────────────────┘
-```
+The gate **fails closed**: if `AUTH_SECRET` is unset the token check returns
+`false` rather than `true`. It previously returned `true`, which granted a
+valid session to any caller presenting any cookie whenever the secret was
+missing — an authentication bypass triggered by a missing env var rather than
+by any credential.
 
 ---
 
-## 9. Performance Targets
+## 7. Security controls
 
-| Metric | Target |
-|--------|--------|
-| Page Load (SSR) | < 200ms |
-| Document Generation | < 2s |
-| PDF Export | < 3s |
-| DOCX Export | < 2s |
-| API Response (P95) | < 100ms |
-| Concurrent Users | 100,000+ |
-| Database Queries | < 10ms (cached) |
-| AI Generation | < 5s |
-| File Upload | < 1s (direct S3) |
+### Headers
 
----
+`src/proxy.ts` owns all of them. `next.config.ts` sets the static baseline;
+it deliberately does **not** set HSTS, because `headers()` cannot see the
+request and was therefore emitting HTTPS pinning over plain HTTP.
 
-## 10. Database Schema Relationships
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | Enforced, with a per-response nonce |
+| `Content-Security-Policy-Report-Only` | Stricter candidate, reported never enforced |
+| `Reporting-Endpoints` | First-party `/api/csp-report`, omitted when no trustworthy origin exists |
+| `Strict-Transport-Security` | `max-age=31536000`, **only** for requests verified as HTTPS |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | camera, microphone, geolocation, payment, usb all `()` |
 
-```
-Organization 1──N User
-Organization 1──N CompanyProfile
-User 1──N Document
-User 1──N Template
-User 1──N Subscription
-Organization 1──N Document (via tenant)
+### Trusted proxy
 
-Category 1──N Document
-Category 1──N Template
+`x-forwarded-proto` is forgeable whenever the app port is directly reachable,
+so it is believed only when `TRUST_PROXY=true`. That flag also gates the CSP
+reporting origin. `src/instrumentation.ts` warns at boot when it is unset in
+production, because the failure mode is a silent loss of HSTS.
 
-Document 1──N DocumentVersion
-Document 1──N DocumentShare
-Document 1──N AuditLog
+### HTML sanitization
 
-Template 1──N TemplateVariable
-Template 1──N TemplateVersion
+`src/lib/security/sanitize-html.ts` is **allowlist-based**: structural, text,
+table and media tags, plus a drawing subset of SVG. `script`, `iframe`,
+`object`, `embed` and style carriers are dropped with their contents. URL
+schemes are limited to `http`, `https`, `mailto`, `tel`, `ftp` and
+`data:image/*`. CSS is stripped of `expression()`, `behavior`, `@import` and
+`javascript:` URLs. SVG additionally loses animation elements, `on*` handlers
+and non-fragment `href`.
 
-Subscription 1──N Payment
-User 1──N Payment
-Organization 1──N Coupon
-Organization 1──N SupportTicket
-```
+This runs on user-authored document HTML before it is served from a public
+share endpoint or inlined into a PDF.
 
----
+### Payments
 
-## 11. API Routes Structure
+- Amounts are resolved **server-side** from constants; the client never
+  supplies an amount.
+- Razorpay signatures are verified with a **constant-time** comparison, and
+  the result is **cross-checked against the Razorpay API** — payment belongs
+  to the order, status is `captured`, and the amount matches.
+- The webhook verifies an HMAC in constant time and fails **closed** when the
+  IP is unknown in production. The previous logic skipped the check entirely
+  when the IP could not be determined, so stripping the forwarding headers
+  made the whole control evaporate.
+- `Payment.usedAt` is claimed atomically, so a ₹9 payment cannot be replayed
+  for unlimited downloads.
 
-```
-/api/auth/[...nextauth]     - NextAuth authentication
-/api/auth/otp/send          - Send OTP
-/api/auth/otp/verify        - Verify OTP
-/api/auth/2fa/setup         - Setup 2FA
-/api/auth/2fa/verify        - Verify 2FA
+### CSRF
 
-/api/documents              - CRUD documents
-/api/documents/[id]         - Single document operations
-/api/documents/[id]/export  - Export document
-/api/documents/[id]/versions - Version history
-/api/documents/[id]/share   - Share document
-/api/documents/generate     - Generate from template
+`assertSameOrigin` checks the `Origin` header and `Sec-Fetch-Site` on every
+state-changing route.
 
-/api/templates              - CRUD templates
-/api/templates/[id]         - Single template
-/api/templates/[id]/use     - Create document from template
-/api/templates/public       - Public templates
-/api/templates/import       - Import template
+### Input validation
 
-/api/company/profile        - Company profile
-/api/company/branding       - Branding settings
-/api/company/team           - Team management
+`src/lib/security/request.ts` provides `cleanString` (length cap, control
+characters), `boundedInt`, `enumValue`, `parsePagination` and `escapeHtml`.
+External image URLs are checked against a host allowlist.
 
-/api/subscriptions          - Subscription management
-/api/subscriptions/renew    - Renew subscription
-/api/subscriptions/cancel   - Cancel subscription
+### Logging
 
-/api/payments/create-order  - Create Razorpay order
-/api/payments/verify        - Verify payment
-/api/payments/invoices      - Payment invoices
-/api/payments/coupons       - Apply coupon
-
-/api/admin/dashboard        - Admin dashboard stats
-/api/admin/users            - User management
-/api/admin/settings         - System settings
-/api/admin/audit-logs       - Audit logs
-
-/api/instant/download       - Instant download flow
-/api/instant/preview        - Instant preview
-/api/instant/pay            - Instant payment
-```
+`src/lib/security/logger.ts` emits structured JSON security events with
+request correlation ids. Emails are masked. Webhook, payment, authorization
+and rate-limit paths log through it rather than `console`.
 
 ---
 
-## 12. Deployment Architecture
-
-### Docker Compose (Development)
-
-```yaml
-services:
-  app:        # Next.js application
-  postgres:   # PostgreSQL database
-  redis:      # Redis cache
-  worker:     # BullMQ worker
-  nginx:      # Reverse proxy
-```
-
-### Kubernetes (Production)
+## 8. Document engine
 
 ```
-- 3+ Next.js pods (auto-scaled)
-- PostgreSQL with 2 read replicas
-- Redis cluster (3 nodes)
-- BullMQ worker pods (auto-scaled)
-- Ingress controller (Nginx/Traefik)
-- Horizontal Pod Autoscaler
-- Pod Disruption Budgets
-- Network Policies
+Template → placeholder extraction → variable resolution
+         → HTML canvas → sanitize → preview
+         → export: DOCX (server) | PDF (jsPDF, client) | HTML
 ```
 
-### CI/CD Pipeline
+- `DocumentEngine` — CRUD, versioning, duplicate, soft delete, favourites,
+  sharing, stats. Every query is tenant-scoped.
+- `TemplateEngine` — CRUD, duplicate, usage tracking, and
+  `sanitizeTemplateForCaller`, which strips premium fields for callers without
+  an active subscription.
+- `DOCXGenerator` — server-side HTML → DOCX.
+- `PDFGenerator` — jsPDF, A4.
+- **Premium gating is enforced server-side.** Non-subscribers receive a
+  truncated, watermarked sample.
 
-```
-Git Push → GitHub Actions → Lint → Test → Build → Docker Image
-  → Push to Registry → Deploy to Staging → E2E Tests → Deploy to Production
-```
+### Payslip designer
+
+A @dnd-kit canvas with a palette, properties panel, undo/redo, grouping,
+z-ordering and HTML export. This is the largest untested surface in the
+codebase — `canvas.tsx` is 865 lines with no unit tests.
+
+### Export paths
+
+PDF and DOCX use **different renderers**, which is the most important thing to
+know about document output here:
+
+- **PDF** — jsPDF `.html()` rasterises through the browser's own HTML engine
+  via html2canvas, so tables, page breaks and CSS behave as they do on screen.
+- **DOCX** — `src/lib/docx/docx-generator.ts` parses the HTML itself and emits
+  native Word constructs: tables (colspan/rowspan, nested tables, borders,
+  header shading), lists, headings, inline formatting, line breaks and
+  embedded images.
+
+`DOCXGenerator` previously had no `<table>` branch and skipped `<style>` tags
+without skipping their contents, so every exported document lost all tables
+and opened with raw CSS as body text. It now parses to a tree and renders
+through an intermediate model; `docx-generator.regression.test.ts` asserts
+this against all 30 seeded templates.
+
+**Visual PDF output is not covered by unit tests** — jsPDF needs a browser DOM.
+Structural coverage lives in `document-export.pdf-regression.test.ts`; visual
+verification requires the Playwright staging suite, which has not run.
 
 ---
 
-*This architecture document serves as the blueprint for the DocMint enterprise platform. All implementation should follow these principles and patterns.*
+## 9. Testing
+
+| Suite | Runner | Count | Requires |
+|---|---|---|---|
+| Unit | Vitest | 1129 / 49 files | nothing |
+| E2E | Playwright | 53 default, 65 with destructive | deployed staging origin |
+
+Unit tests concentrate on `src/lib/**`. **Components and pages have no unit
+tests**; the coverage config does not include them, so component behaviour is
+unmeasured.
+
+The E2E suite targets a real staging deployment because it validates TLS,
+HSTS, the trusted-proxy chain and browser CSP enforcement — none of which a
+local server can exercise. `playwright.config.ts` refuses to run without
+`STAGING_BASE_URL`, refuses hosts that look like production, and refuses plain
+HTTP for non-local targets. Tests that create accounts or place orders are
+tagged `@destructive` and gated behind `STAGING_ALLOW_DESTRUCTIVE=1`.
+
+---
+
+## 10. Not implemented
+
+Listed explicitly so they are not mistaken for existing capability. These
+appeared in earlier versions of this document and do not exist in the codebase:
+
+| Claimed | Reality |
+|---|---|
+| Redis caching for sessions/templates | No Redis dependency. Dev compose starts a container nothing connects to. |
+| BullMQ job queue | No queue dependency. Generation is synchronous in-request. |
+| S3 / R2 object storage | No storage dependency. Uploads are data URLs in the database. |
+| Puppeteer PDF rendering | No Puppeteer. PDFs are jsPDF on the client. |
+| Kubernetes deployment | Docker compose + nginx only. |
+| OTP authentication | No `/api/auth/otp/*` routes. |
+| TOTP two-factor authentication | `User.twoFactorEnabled` exists in the schema; the admin dashboard returns a hardcoded `false`. No setup or verify routes. |
+| `TemplateVariable` model | A TypeScript type, not a Prisma model. |
+| `prisma.$use()` tenant middleware | Never existed. Tenant scoping is explicit in `scopeWhere` and the engines. |
+| Prisma middleware auto-scoping | Not present; isolation is manual and per-query. |
+
+Also absent: digital signing, QR verification on documents, bulk export,
+translation, grammar checking.
+
+---
+
+## 11. Known limitations
+
+1. **Rate limiting is per-process** (`src/lib/rate-limit.ts`). It blunts abuse
+   on a single instance and does not hold across replicas. Documented in-file
+   as abuse-blunting, not a security boundary.
+2. **Token lookup still sweeps when the index column is absent.** The indexed
+   HMAC path and its migration are implemented, but the migration is **not
+   applied**, so production behaviour is still the bounded 50-candidate sweep:
+   a valid token beyond that window is rejected. Fails safe, but denies
+   legitimate users. See [`TOKEN_LOOKUP_PROPOSAL.md`](./TOKEN_LOOKUP_PROPOSAL.md).
+3. **Financial validation covers arithmetic only.** No statutory rate (PF, ESI,
+   professional tax, income tax, GST) is derived, because those need a business
+   decision the product has not made. See
+   [`FINANCIAL_VALIDATION.md`](./FINANCIAL_VALIDATION.md).
+4. **Client-heavy rendering.** 33 of 35 pages are client components.
+5. **AI generation is unwired.** `src/lib/ai/ai-engine.ts` has no callers.
+6. **No component tests.** The largest and most intricate UI - the payslip
+   designer - is untested.
+7. **E2E unverified.** The suite has not been executed against a valid,
+   isolated HTTPS staging environment.
+
+---
+
+## 12. Deployment
+
+- `output: 'standalone'`, so the Docker image runs the server directly.
+- nginx terminates TLS and guards the webhook path. HSTS is emitted by the
+  app, not nginx, so `TRUST_PROXY=true` is required behind a proxy.
+- `deploy/docker-compose.yml` runs `migrate`, `nextjs` and `nginx`.
+- CI (`.github/workflows/ci.yml`) runs lint → typecheck → unit tests →
+  `npm audit --audit-level=high` → production build. **The Playwright suite is
+  not part of CI.**
+
+### Required production configuration
+
+| Variable | Why |
+|---|---|
+| `AUTH_SECRET` | Session encryption and token digests. The app refuses to trust cookies without it. |
+| `DATABASE_URL` | PostgreSQL connection string. |
+| `TRUST_PROXY=true` | Required for HSTS and a correct CSP reporting origin. Never set when the app port is directly reachable. |
+| `RAZORPAY_WEBHOOK_SECRET` | Webhook signature verification. |
+| `NEXT_PUBLIC_APP_URL` | Public origin used in email and share links. |

@@ -18,6 +18,12 @@ const nextConfig: NextConfig = {
   },
 
   // ─── Security Headers ───
+  //
+  // Strict-Transport-Security is intentionally NOT set here. `headers()` is
+  // static and cannot see the request, so it applied HSTS to plain-HTTP
+  // responses too, overriding the protocol check in `src/proxy.ts`. HSTS is
+  // now owned solely by the proxy, which emits it only for requests verified
+  // as HTTPS via a trusted proxy.
   async headers() {
     return [
       {
@@ -36,12 +42,8 @@ const nextConfig: NextConfig = {
             value: 'strict-origin-when-cross-origin',
           },
           {
-            key: 'X-XSS-Protection',
-            value: '1; mode=block',
-          },
-          {
-            key: 'Strict-Transport-Security',
-            value: 'max-age=31536000; includeSubDomains',
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
           },
         ],
       },

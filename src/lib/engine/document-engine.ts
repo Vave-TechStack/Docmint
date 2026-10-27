@@ -11,58 +11,55 @@ import type {
 import { SYSTEM_PLACEHOLDERS } from '@/lib/utils/constants';
 import { getDefaultImageForPlaceholder, isImagePlaceholder, isValidImageSource, replaceSvgDataUris } from '@/lib/utils/image-placeholders';
 import { extractPlaceholders as detectPlaceholders } from '@/lib/utils/placeholders';
+import { sanitizeHtmlFragment } from '@/lib/security/sanitize-html';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 
 /**
  * Server-side HTML sanitizer for generated documents.
  *
- * Templates are user-generated HTML, and a malicious PUBLIC template could
- * embed script that runs when a victim opens a downloaded/previewed document
- * (browser previews are already sandboxed without allow-scripts, but the
- * downloaded .html file is not). Variable values are also interpolated raw.
- * This conservative pass neutralizes script execution vectors while keeping
- * everything legitimate documents need (tables, styles, SVG, data-URI images):
+ * Templates are user-generated HTML, and a malicious PUBLIC template (or any
+ * document shared publicly) could otherwise embed script that runs when a
+ * victim opens the preview or the downloaded .html file. Variable values are
+ * interpolated raw, so both the template and the values are attack inputs.
  *
- *  - removes <script>, <iframe>, <object>, <embed>, <base>, <link>, <meta>
- *  - removes all on* event-handler attributes
- *  - neutralizes javascript:/vbscript:/data:text/html URLs in href/src
- *  - strips style attributes that smuggle url(javascript:)
+ * The previous implementation was a regex *blocklist*:
  *
- * Regex-based by design (no DOM dependency server-side); it complements, not
- * replaces, the client-side DOMPurify pass used by the designer export.
+ *   out.replace(/(href|src)\s*=\s*(['"]?)\s*javascript\s*:/gi, '$1=$2#')
+ *
+ * which is bypassed by entity encoding (`&#106;avascript:`), embedded control
+ * characters (`java&#x09;script:`), and elements the blocklist never
+ * mentioned (`<svg><animate attributeName="href" values="javascript:…">`,
+ * `<form action=…>`, `<math><mtext>` mXSS).
+ *
+ * It is now an allowlist sanitizer: unknown elements are unwrapped, scripting
+ * and re-entrant-parsing elements are removed with their subtree, unknown
+ * attributes are dropped, and URL schemes are checked *after* entity decoding.
+ * See `src/lib/security/sanitize-html.ts` for the full rationale.
  */
 export function sanitizeDocumentHtml(html: string): string {
   if (!html) return html;
 
-  let out = html;
+  // A stored template may be a complete HTML document. Sanitize each part with
+  // the same policy, but keep the document shell: `extractBodyContent()` keys
+  // off `<!DOCTYPE html>` / `<body>`, and `<meta charset>` is load-bearing for
+  // the downloaded file. Nothing inside <head> other than <style>/<title> is
+  // carried over.
+  const fullDocument = /<!DOCTYPE\s+html|<html[\s>]/i.test(html);
+  if (!fullDocument) return sanitizeHtmlFragment(html);
 
-  // 1. Drop executable/embedding elements entirely (paired + self-closing).
-  out = out.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  out = out.replace(/<script\b[^>]*\/?>/gi, '');
-  out = out.replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe\s*>/gi, '');
-  out = out.replace(/<iframe\b[^>]*\/?>/gi, '');
-  out = out.replace(/<object\b[^>]*>[\s\S]*?<\/object\s*>/gi, '');
-  out = out.replace(/<object\b[^>]*\/?>/gi, '');
-  out = out.replace(/<embed\b[^>]*\/?>/gi, '');
-  out = out.replace(/<base\b[^>]*\/?>/gi, '');
-  out = out.replace(/<link\b[^>]*\/?>/gi, '');
-  out = out.replace(/<meta\b[^>]*\/?>/gi, '');
+  const styleTags: string[] = [];
+  const styleRegex = /<style[^>]*>[\s\S]*?<\/style\s*>/gi;
+  let styleMatch: RegExpExecArray | null;
+  while ((styleMatch = styleRegex.exec(html)) !== null) {
+    const safe = sanitizeHtmlFragment(styleMatch[0]);
+    if (safe) styleTags.push(safe);
+  }
 
-  // 2. Remove event-handler attributes (onclick, onerror, onload, …).
-  out = out.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  const bodyMatch = /<body[^>]*>([\s\S]*)<\/body\s*>/i.exec(html);
+  if (!bodyMatch) return sanitizeHtmlFragment(html);
 
-  // 3. Neutralize dangerous URL schemes in href/src (case/whitespace tolerant).
-  out = out.replace(/(href|src)\s*=\s*(['"]?)\s*javascript\s*:/gi, '$1=$2#');
-  out = out.replace(/(href|src)\s*=\s*(['"]?)\s*vbscript\s*:/gi, '$1=$2#');
-  out = out.replace(/(href|src)\s*=\s*(['"]?)\s*data\s*:\s*text\/html/gi, '$1=$2#');
-
-  // 4. Strip style attributes smuggling url(javascript:...).
-  out = out.replace(/style\s*=\s*("[^"]*"|'[^']*')/gi, (match) =>
-    /url\s*\(\s*['"]?\s*(javascript|vbscript)\s*:/i.test(match) ? '' : match
-  );
-
-  return out;
+  return styleTags.join('\n') + '\n' + sanitizeHtmlFragment(bodyMatch[1]);
 }
 
 /**
@@ -104,8 +101,20 @@ export function extractBodyContent(html: string): string {
  * onerror handlers to remaining images to ensure no console errors occur.
  */
 export function wrapStyledHtml(html: string): string {
-  // Convert SVG data URIs to inline SVGs
-  let processedHtml = replaceSvgDataUris(html || '');
+  // Sanitize BEFORE the SVG inlining and before the onerror injection below:
+  //   - user HTML reaches this function unsanitized from the public-share
+  //     download and instant-download routes, so this is the last gate before
+  //     markup is served from the DocMint origin;
+  //   - replaceSvgDataUris turns an inert <img src="data:image/svg+xml"> into
+  //     LIVE inline <svg>, which would otherwise resurrect script that the
+  //     sanitizer removed from the surrounding document;
+  //   - the onerror handler is added by the application itself afterwards, so
+  //     it is never stripped.
+  let processedHtml = sanitizeHtmlFragment(html || '');
+
+  // Convert SVG data URIs to inline SVGs (each payload is itself sanitized
+  // inside cleanSvgMarkup).
+  processedHtml = replaceSvgDataUris(processedHtml);
 
   // Add onerror fallback to any remaining img tags to prevent broken image console errors
   processedHtml = processedHtml.replace(
@@ -145,6 +154,62 @@ export function wrapStyledHtml(html: string): string {
       </style>
     </head><body><div class="page-content">${processedHtml}</div></body></html>
   `;
+}
+
+/**
+ * Truncate a document body to a real preview.
+ *
+ * The "sample" download for a premium template used to return the *entire*
+ * template body with a watermark `<div>` layered on top. A watermark is a
+ * `<div>` in the HTML: deleting it costs one line of JavaScript, so the
+ * paywall leaked the complete premium template. This cuts the body at a
+ * top-level element boundary instead, so a sample genuinely cannot be
+ * reassembled into the paid document.
+ *
+ * Cutting only at depth-0 boundaries guarantees well-formed output (no tag is
+ * sliced in half); a mid-element fallback exists for the case where the first
+ * top-level element alone exceeds the budget.
+ */
+export function truncateSampleBody(
+  html: string,
+  maxChars = 3000
+): { html: string; truncated: boolean } {
+  const source = sanitizeHtmlFragment(html || '');
+  if (source.length <= maxChars) return { html: source, truncated: false };
+
+  const VOID = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
+    'param', 'source', 'track', 'wbr',
+  ]);
+  const TAG = /<\/?([a-zA-Z][a-zA-Z0-9:._-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+
+  const blockBoundaries: number[] = [];
+  const anyBoundary: number[] = [];
+  let depth = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = TAG.exec(source)) !== null) {
+    const full = match[0];
+    const name = match[1].toLowerCase();
+    anyBoundary.push(match.index + full.length);
+
+    if (full.startsWith('</')) {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) blockBoundaries.push(match.index + full.length);
+    } else if (!/\/\s*>$/.test(full) && !VOID.has(name)) {
+      depth += 1;
+    }
+  }
+  // Unbalanced markup: the tail is still a usable cut point.
+  blockBoundaries.push(source.length);
+  anyBoundary.push(source.length);
+
+  const pick = (points: number[]) => points.filter((p) => p <= maxChars).pop() ?? 0;
+  let cut = pick(blockBoundaries);
+  if (cut === 0) cut = pick(anyBoundary);
+  if (cut === 0) return { html: '', truncated: true };
+
+  return { html: source.slice(0, cut), truncated: cut < source.length };
 }
 
 /**
@@ -189,6 +254,10 @@ export class DocumentEngine {
         folderId: input.folderId,
         content: toJson(input.content || {}),
         variables: toJson(input.variables || {}),
+        // The document body. Omitting this made every document created from a
+        // template open as a blank editor, because this is the column the
+        // editor loads and every export path renders from.
+        htmlContent: input.htmlContent ?? null,
         status: 'DRAFT',
         version: 1,
       },
@@ -202,6 +271,7 @@ export class DocumentEngine {
         version: 1,
         content: toJson(input.content || {}),
         variables: toJson(input.variables || {}),
+        htmlContent: input.htmlContent ?? null,
         changeNote: 'Initial version',
       },
     });
@@ -222,6 +292,50 @@ export class DocumentEngine {
   }
 
   /**
+   * Columns a caller may write on update.
+   *
+   * This is an explicit allowlist rather than a spread of the request body.
+   * `Prisma.DocumentUpdateInput` is a union that includes
+   * `DocumentUncheckedUpdateInput`, which accepts `organizationId`, `userId`,
+   * `id`, `deletedAt` and every other ownership column — and that TypeScript
+   * annotation is erased at runtime. Spreading the parsed body straight into
+   * `data` therefore let any signed-in user re-parent their own document into
+   * another tenant (and into another user's document list) with a single PATCH,
+   * because the scoping check above only validated the row's CURRENT owner.
+   *
+   * Ownership and lifecycle columns (`organizationId`, `userId`, `id`,
+   * `createdAt`, `deletedAt`, `version`, `password`, …) are deliberately absent
+   * and must be changed through a purpose-built method.
+   */
+  private static pickUpdatableFields(input: DocumentUpdateInput): Prisma.DocumentUpdateInput {
+    const allowed = [
+      'title',
+      'description',
+      'documentType',
+      'categoryId',
+      'folderId',
+      'content',
+      'htmlContent',
+      'plainText',
+      'variables',
+      'status',
+      'isFavorite',
+      'isArchived',
+      'tags',
+    ] as const;
+
+    const data: Record<string, unknown> = {};
+    // The declared `DocumentUpdateInput` omits columns the database has
+    // (`htmlContent`, `plainText`) because routes pass the parsed JSON body
+    // straight through, so index a record view rather than the narrow type.
+    const source = input as unknown as Record<string, unknown>;
+    for (const field of allowed) {
+      if (source[field] !== undefined) data[field] = source[field];
+    }
+    return data as Prisma.DocumentUpdateInput;
+  }
+
+  /**
    * Update a document
    */
   static async update(
@@ -239,7 +353,7 @@ export class DocumentEngine {
     const updated = await prisma.document.update({
       where: { id },
       data: {
-        ...(input as unknown as Prisma.DocumentUpdateInput),
+        ...DocumentEngine.pickUpdatableFields(input),
         version: existing.version + 1,
         lastEditedAt: new Date(),
       } as unknown as Prisma.DocumentUpdateInput,
@@ -337,15 +451,23 @@ export class DocumentEngine {
 
   /**
    * Soft delete a document with tenant isolation
+   * Also deactivates all active share links for the document.
    */
   static async delete(id: string, tenantId: string, userId: string): Promise<void> {
     const doc = await prisma.document.findFirst({
       where: { id, organizationId: tenantId },
     });
     if (!doc) throw new Error('Document not found or access denied');
-    await prisma.document.update({
-      where: { id },
-      data: { deletedAt: new Date(), status: 'DELETED' },
+    await prisma.$transaction(async (tx) => {
+      await tx.document.update({
+        where: { id },
+        data: { deletedAt: new Date(), status: 'DELETED' },
+      });
+      // Deactivate all active shares so existing tokens cannot access the deleted document
+      await tx.documentShare.updateMany({
+        where: { documentId: id, isActive: true },
+        data: { isActive: false },
+      });
     });
     await prisma.auditLog.create({
       data: {
@@ -595,7 +717,7 @@ export class DocumentEngine {
   static async getSharedDocument(token: string, password?: string) {
     const share = await prisma.documentShare.findUnique({
       where: { token },
-      include: { document: { select: { id: true, title: true, description: true, documentType: true, htmlContent: true, createdAt: true, updatedAt: true } } },
+      include: { document: { select: { id: true, title: true, description: true, documentType: true, htmlContent: true, createdAt: true, updatedAt: true, deletedAt: true, status: true } } },
     });
     if (!share) return { success: false, error: 'Share link not found' };
     if (!share.isActive) return { success: false, error: 'This share link has been revoked' };
@@ -606,16 +728,77 @@ export class DocumentEngine {
       const ok = await this.verifySharePassword(password, share.password);
       if (!ok) return { success: false, error: 'Invalid password' };
     }
-    return { success: true, data: share.document, share };
+    // Defense in depth: reject if the underlying document has been soft-deleted
+    if (!share.document || share.document.deletedAt || share.document.status === 'DELETED') {
+      return { success: false, error: 'Share link not found' };
+    }
+
+    /**
+     * Sanitize before returning. This route is unauthenticated and the content
+     * is attacker-controlled (template HTML and document variable values are
+     * both interpolated raw), so the JSON feeds `dangerouslySetInnerHTML` on
+     * the share page. Returning the raw column made that a stored-XSS sink on
+     * the DocMint origin.
+     */
+    const data = {
+      ...share.document,
+      htmlContent: share.document.htmlContent
+        ? sanitizeHtmlFragment(share.document.htmlContent)
+        : share.document.htmlContent,
+    };
+
+    // NOTE: the full `share` row is deliberately not returned. It carries
+    // `password` (the bcrypt hash), which previously shipped to every
+    // anonymous visitor of a password-protected share link — a hash leak that
+    // makes offline cracking of a user-chosen share password realistic.
+    return { success: true, data };
   }
 
+  /**
+   * Atomically consume one download from the share's allowance.
+   *
+   * The previous read-then-increment had a check-then-act race: N concurrent
+   * requests all read `downloadCount` before any of them wrote, so a share
+   * limited to 1 download could be downloaded many times in parallel. The
+   * limit is now part of the UPDATE's WHERE clause, which the database
+   * evaluates under a row lock.
+   *
+   * @returns true when a download was recorded, false when the share is
+   *          unknown, inactive or its allowance is exhausted.
+   */
   static async recordShareDownload(token: string): Promise<boolean> {
-    const share = await prisma.documentShare.findUnique({ where: { token } });
+    const share = await prisma.documentShare.findUnique({
+      where: { token },
+      select: { id: true, maxDownloads: true },
+    });
     if (!share) return false;
-    await prisma.documentShare.update({ where: { id: share.id }, data: { downloadCount: { increment: 1 } } });
-    if (share.maxDownloads && share.downloadCount + 1 >= share.maxDownloads) {
-      await prisma.documentShare.update({ where: { id: share.id }, data: { isActive: false } });
+
+    // `download_count < max_downloads` is evaluated atomically with the
+    // increment, so the allowance cannot be oversubscribed.
+    const claimed = await prisma.documentShare.updateMany({
+      where: {
+        id: share.id,
+        isActive: true,
+        ...(share.maxDownloads !== null
+          ? { downloadCount: { lt: share.maxDownloads } }
+          : {}),
+      },
+      data: { downloadCount: { increment: 1 } },
+    });
+    if (claimed.count === 0) return false;
+
+    // Deactivate once the allowance is used up, so the link stops resolving.
+    if (share.maxDownloads !== null) {
+      await prisma.documentShare.updateMany({
+        where: {
+          id: share.id,
+          downloadCount: { gte: share.maxDownloads },
+          isActive: true,
+        },
+        data: { isActive: false },
+      });
     }
+
     return true;
   }
 

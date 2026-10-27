@@ -16,6 +16,7 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react';
+import { passwordValidationError } from '@/lib/auth/password-policy';
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: User },
@@ -31,6 +32,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabId>('profile');
   const [saving, setSaving] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
 
   // Profile form
   const [profile, setProfile] = useState({ name: '', email: '', mobile: '' });
@@ -66,10 +68,30 @@ export default function SettingsPage() {
 
   const handleSaveProfile = async () => {
     setSaving(true);
-    // Profile updates will be available in a future update
-    await new Promise(resolve => setTimeout(resolve, 500));
-    toast.success('Profile updated successfully');
-    setSaving(false);
+    try {
+      // Previously this slept 500ms and toasted success without calling any
+      // API, so every edit the user made was silently discarded.
+      const res = await fetch('/api/account', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: profile.name, mobile: profile.mobile }),
+      });
+      const data = await res.json().catch(() => ({ success: false, error: 'Request failed' }));
+
+      if (!res.ok || !data.success) {
+        toast.error(data.error || 'Failed to update profile');
+        return;
+      }
+      toast.success('Profile updated successfully');
+      // Reflect the server's stored values rather than assuming success.
+      if (data.data) {
+        setProfile((p) => ({ ...p, name: data.data.name, mobile: data.data.mobile || '' }));
+      }
+    } catch {
+      toast.error('Could not reach the server. Your changes were not saved.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleUpdatePassword = async () => {
@@ -81,12 +103,37 @@ export default function SettingsPage() {
       toast.error('Passwords do not match');
       return;
     }
-    if (password.newPass.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    const passwordError = passwordValidationError(password.newPass);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
-    toast.success('Password updated (API coming soon)');
-    setPassword({ current: '', newPass: '', confirm: '' });
+
+    setChangingPassword(true);
+    try {
+      // The real endpoint requires the CURRENT password and revokes other
+      // sessions. This previously toasted success without any API call.
+      const res = await fetch('/api/account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: password.current,
+          newPassword: password.newPass,
+        }),
+      });
+      const data = await res.json().catch(() => ({ success: false, error: 'Request failed' }));
+
+      if (!res.ok || !data.success) {
+        toast.error(data.error || 'Failed to update password');
+        return;
+      }
+      toast.success(data.message || 'Password updated');
+      setPassword({ current: '', newPass: '', confirm: '' });
+    } catch {
+      toast.error('Could not reach the server. Your password was not changed.');
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   if (status === 'loading') {
@@ -162,15 +209,20 @@ export default function SettingsPage() {
                   </button>
                 </div>
               ))}
-              <Button onClick={handleUpdatePassword}>
+              <Button onClick={handleUpdatePassword} disabled={changingPassword}>
                 <Shield className="w-4 h-4 mr-2" />
-                Update Password
+                {changingPassword ? 'Updating…' : 'Update Password'}
               </Button>
             </div>
             <div className="pt-4 border-t border-gray-100">
               <h4 className="text-sm font-semibold mb-2">Two-Factor Authentication</h4>
-              <p className="text-sm text-gray-500 mb-3">Add an extra layer of security to your account.</p>
-              <Button variant="outline" size="sm">Enable 2FA</Button>
+              <p className="text-sm text-gray-500 mb-3">
+                Two-factor authentication is not available yet. There is no
+                setup or verification flow behind this control.
+              </p>
+              <Button variant="outline" size="sm" disabled title="Not implemented">
+                Enable 2FA (coming soon)
+              </Button>
             </div>
           </div>
         )}
@@ -252,9 +304,9 @@ export default function SettingsPage() {
                 </select>
               </div>
             </div>
-            <Button variant="outline">
+            <Button variant="outline" disabled title="Not implemented">
               <Palette className="w-4 h-4 mr-2" />
-              Apply Theme
+              Apply Theme (coming soon)
             </Button>
           </div>
         )}

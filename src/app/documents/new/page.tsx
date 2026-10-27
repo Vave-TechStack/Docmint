@@ -83,7 +83,9 @@ export default function NewDocumentPage() {
       const data = await res.json();
       if (data.success) {
         toast.success('Document saved');
-        router.push(`/documents/${data.data.id}`);
+        // There is no /documents/[id] route — only /documents/[id]/edit.
+        // Pushing to the bare id landed every new document on a 404.
+        router.push(`/documents/${data.data.id}/edit`);
       } else {
         toast.error(data.error || 'Failed to save');
       }

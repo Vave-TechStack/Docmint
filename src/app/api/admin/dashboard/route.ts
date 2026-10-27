@@ -1,15 +1,28 @@
-import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireAdmin, scopeWhere } from '@/lib/security/authorization';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
+
   try {
-    const session = await auth();
-    if (!session?.user || !['SUPER_ADMIN', 'ADMIN'].includes(session.user.role ?? '')) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+    /**
+     * Tenant scoping.
+     *
+     * The dashboard ran every count/aggregate platform-wide, and `recentUsers`
+     * returned the names, emails, roles and verification state of the ten most
+     * recently created accounts ON THE WHOLE PLATFORM — a live feed of
+     * competitor signups. `documentCategories` likewise summarised every
+     * tenant's documents. All queries are now pinned to the caller's own
+     * organization.
+     */
+    const userScope = () => scopeWhere(guard.guard, { deletedAt: null } as Record<string, unknown>);
+    const docScope = () => scopeWhere(guard.guard, { deletedAt: null } as Record<string, unknown>);
+    const paymentScope = () => scopeWhere(guard.guard, { status: 'SUCCESS' } as Record<string, unknown>);
+    const subScope = () => scopeWhere(guard.guard, {} as Record<string, unknown>);
 
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -28,29 +41,30 @@ export async function GET() {
       recentUsers,
       documentCategories,
     ] = await Promise.all([
-      prisma.user.count({ where: { deletedAt: null } }),
-      prisma.subscription.count({ where: { status: 'ACTIVE' } }),
-      prisma.document.count({ where: { deletedAt: null } }),
-      prisma.payment.aggregate({ where: { status: 'SUCCESS' }, _sum: { amount: true } }),
+      prisma.user.count({ where: userScope() }),
+      prisma.subscription.count({ where: { ...subScope(), status: 'ACTIVE' } }),
+      prisma.document.count({ where: docScope() }),
+      prisma.payment.aggregate({ where: paymentScope(), _sum: { amount: true } }),
       prisma.payment.findMany({
-        where: { status: 'SUCCESS', createdAt: { gte: thirtyDaysAgo } },
+        where: { ...paymentScope(), createdAt: { gte: thirtyDaysAgo } },
         select: { amount: true, createdAt: true },
         orderBy: { createdAt: 'asc' },
       }),
       prisma.payment.findMany({
-        where: { status: 'SUCCESS', createdAt: { gte: startOfMonth } },
+        where: { ...paymentScope(), createdAt: { gte: startOfMonth } },
         select: { amount: true, createdAt: true },
       }),
-      prisma.subscription.count({ where: { status: 'ACTIVE' } }),
-      prisma.subscription.count({ where: { status: 'EXPIRED' } }),
+      prisma.subscription.count({ where: { ...subScope(), status: 'ACTIVE' } }),
+      prisma.subscription.count({ where: { ...subScope(), status: 'EXPIRED' } }),
       prisma.user.findMany({
-        where: { deletedAt: null },
+        where: userScope(),
         orderBy: { createdAt: 'desc' },
         take: 10,
         select: { id: true, name: true, email: true, image: true, role: true, organizationId: true, emailVerified: true, createdAt: true },
       }),
       prisma.document.groupBy({
         by: ['documentType'],
+        where: docScope(),
         _count: true,
         orderBy: { _count: { documentType: 'desc' } },
         take: 10,

@@ -82,6 +82,17 @@ export interface DocumentCreateInput {
   folderId?: string;
   content?: Record<string, unknown>;
   variables?: Record<string, string>;
+  /**
+   * The document body as HTML.
+   *
+   * This is the column the editor reads (`src/app/documents/[id]/edit/page.tsx`
+   * calls `setHtmlContent(doc.htmlContent)`) and the column every export path
+   * renders from. It was previously absent from this type AND from
+   * `DocumentEngine.create`, so "Use This Template" posted the template markup
+   * and the engine silently discarded it — every document created from a
+   * template opened as a blank editor.
+   */
+  htmlContent?: string;
 }
 
 export interface DocumentUpdateInput extends Partial<DocumentCreateInput> {
