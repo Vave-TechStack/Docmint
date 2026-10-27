@@ -135,7 +135,7 @@ export class EmailService {
           <h1 style="color: #2563EB;">Welcome, ${name}! 🎉</h1>
           <p>Your DocMint account is ready. Start creating professional documents.</p>
           <div style="margin: 30px 0;">
-            <a href="${publicAppUrl()}/dashboard" 
+            <a href="${publicAppUrl()}/dashboard"
                style="display: inline-block; padding: 12px 24px; background-color: #2563EB; color: white; 
                       text-decoration: none; border-radius: 6px;">
               Go to Dashboard
